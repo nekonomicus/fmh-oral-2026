@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import Link from 'next/link';
 import { phases, reserveGroups, sideChapters, type CaseItem, type StudyPhase } from './study-data';
 
 const STORAGE_KEY = 'fmh-oral-26-v1';
@@ -127,10 +128,13 @@ export default function Home() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
     }
 
-    setToday(actualToday);
-    setTracker(loaded);
-    setExpanded(actualPhase?.id ?? 'spine');
-    setReady(true);
+    const initialSync = window.setTimeout(() => {
+      setToday(actualToday);
+      setTracker(loaded);
+      setExpanded(actualPhase?.id ?? 'spine');
+      setReady(true);
+    }, 0);
+    return () => window.clearTimeout(initialSync);
   }, []);
 
   const save = (next: TrackerState) => {
@@ -192,6 +196,7 @@ export default function Home() {
       <header className="topbar">
         <span className="wordmark">ORAL / 26</span>
         <div className="top-actions">
+          <Link href="/matrix">MATRIX</Link>
           <button type="button" onClick={exportProgress}>BACKUP</button>
           <button type="button" onClick={() => importRef.current?.click()}>RESTORE</button>
           <input ref={importRef} className="file-input" type="file" accept="application/json" onChange={importProgress} />

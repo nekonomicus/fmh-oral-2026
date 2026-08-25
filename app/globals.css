@@ -39,17 +39,30 @@ button { color: inherit; }
   letter-spacing: .15em;
 }
 .wordmark { color: var(--signal); }
+.wordmark-link { text-decoration: none; }
 .top-actions { display: flex; align-items: center; gap: 18px; }
-.top-actions button {
+.top-actions button, .top-actions a, .top-actions .current-view {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
   border: 0;
-  padding: 8px 0;
+  padding: 0;
   background: transparent;
   color: var(--muted);
   font: inherit;
   letter-spacing: inherit;
+  text-decoration: none;
+}
+.top-actions button, .top-actions a {
   cursor: pointer;
 }
-.top-actions button:hover, .top-actions button:focus-visible { color: var(--ink); }
+.top-actions .current-view { color: var(--ink); }
+.top-actions button:hover, .top-actions button:focus-visible,
+.top-actions a:hover, .top-actions a:focus-visible { color: var(--ink); }
+.top-actions button:focus-visible, .top-actions a:focus-visible {
+  outline: 1px solid var(--signal);
+  outline-offset: 4px;
+}
 .exam-date { margin-left: 6px; color: var(--muted); }
 .file-input { display: none; }
 
@@ -172,11 +185,154 @@ h1 {
 
 footer { display: flex; justify-content: space-between; padding-top: 52px; color: var(--faint); font-size: 9px; }
 
+.matrix-hero {
+  min-height: 280px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+  gap: 80px;
+  align-items: end;
+  padding: 56px 0 40px;
+  border-bottom: 1px solid var(--line);
+}
+.matrix-nav {
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  gap: 34px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+}
+.matrix-nav::-webkit-scrollbar { display: none; }
+.matrix-nav a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: .14em;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.matrix-nav a:hover, .matrix-nav a:focus-visible { color: var(--ink); }
+.matrix-nav a:focus-visible { outline: 1px solid var(--signal); outline-offset: -1px; }
+.matrix-content { padding-top: 40px; }
+.matrix-sector {
+  scroll-margin-top: 18px;
+  padding: 28px 0 48px;
+  border-bottom: 1px solid var(--line);
+}
+.matrix-sector-head {
+  min-height: 64px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+.matrix-sector-head h2 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -.045em;
+}
+.matrix-sector-head > span,
+.matrix-cluster-head {
+  color: var(--muted);
+  font: 700 9px/1.25 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: .11em;
+}
+.matrix-sector-head > span { padding-top: 7px; white-space: nowrap; }
+.matrix-groups {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-flow: dense;
+  gap: 10px;
+}
+.matrix-cluster {
+  min-width: 0;
+  grid-column: span var(--cluster-span);
+  align-self: start;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.matrix-cluster-head {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 12px;
+  background: var(--ground);
+}
+.matrix-cluster-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: uppercase;
+}
+.matrix-cluster-head span { white-space: nowrap; }
+.matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.matrix-tile {
+  position: relative;
+  min-width: 0;
+  min-height: 112px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 13px 12px 11px;
+  border: 0;
+  background: var(--panel);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.matrix-tile:hover { background: #171914; }
+.matrix-tile:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--signal);
+  outline-offset: -2px;
+}
+.matrix-tile.done {
+  background: var(--signal);
+  color: var(--ground);
+}
+.matrix-tile.done:hover { background: #e0ff70; }
+.matrix-tile:disabled { cursor: wait; opacity: .55; }
+.matrix-case-title {
+  padding-right: 16px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+}
+.matrix-case-meta {
+  color: var(--muted);
+  font: 700 7.5px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: .06em;
+  overflow-wrap: anywhere;
+}
+.matrix-tile.done .matrix-case-meta { color: #3c4910; }
+.matrix-status {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font: 800 13px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
 @media (max-width: 760px) {
   .shell { width: min(100% - 28px, 1120px); padding-bottom: 44px; }
   .topbar { height: auto; min-height: 82px; flex-direction: column; align-items: stretch; justify-content: center; gap: 10px; }
-  .top-actions { width: 100%; gap: 14px; }
-  .top-actions button { display: block; padding: 5px 0; font-size: 8px; }
+  .top-actions { width: 100%; gap: 12px; }
+  .top-actions button, .top-actions a, .top-actions .current-view { min-height: 44px; font-size: 8px; }
   .exam-date { margin-left: auto; white-space: nowrap; font-size: 8px; }
   .hero { min-height: 330px; grid-template-columns: 1fr; gap: 58px; align-items: start; padding: 42px 0 34px; }
   h1 { font-size: clamp(62px, 21vw, 88px); }
@@ -196,6 +352,18 @@ footer { display: flex; justify-content: space-between; padding-top: 52px; color
   .final-mocks { grid-template-columns: 1fr; }
   .final-mocks button { border-right: 0; border-bottom: 1px solid var(--line); }
   .final-mocks button:last-child { border-bottom: 0; }
+  .matrix-hero { min-height: 300px; grid-template-columns: 1fr; gap: 58px; align-items: start; padding: 42px 0 34px; }
+  .matrix-nav { min-height: 54px; gap: 24px; }
+  .matrix-content { padding-top: 32px; }
+  .matrix-sector { padding: 24px 0 38px; }
+  .matrix-sector-head { min-height: 58px; }
+  .matrix-sector-head h2 { font-size: 27px; }
+  .matrix-sector-head > span { font-size: 8px; }
+  .matrix-groups { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .matrix-cluster { grid-column: 1 !important; }
+  .matrix-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .matrix-tile { min-height: 112px; }
+  .matrix-tile.long { grid-column: span 2; }
   footer { flex-direction: column; gap: 10px; }
 }
 
