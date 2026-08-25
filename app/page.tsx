@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
-import Link from 'next/link';
 import { phases, reserveGroups, sideChapters, type CaseItem, type StudyPhase } from './study-data';
 
 const STORAGE_KEY = 'fmh-oral-26-v1';
@@ -196,7 +195,7 @@ export default function Home() {
       <header className="topbar">
         <span className="wordmark">ORAL / 26</span>
         <div className="top-actions">
-          <Link href="/matrix">MATRIX</Link>
+          <a href="/matrix">MATRIX</a>
           <button type="button" onClick={exportProgress}>BACKUP</button>
           <button type="button" onClick={() => importRef.current?.click()}>RESTORE</button>
           <input ref={importRef} className="file-input" type="file" accept="application/json" onChange={importProgress} />

@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import Link from 'next/link';
 import { phases, reserveGroups, type CaseItem } from '../study-data';
 
 const STORAGE_KEY = 'fmh-oral-26-v1';
@@ -137,9 +136,12 @@ export default function MatrixClient() {
   return (
     <main className="shell matrix-page" aria-busy={!ready}>
       <header className="topbar">
-        <Link className="wordmark wordmark-link" href="/">ORAL / 26</Link>
+        {/* Native links keep route changes reliable in the hosted Vinext build. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a className="wordmark wordmark-link" href="/">ORAL / 26</a>
         <div className="top-actions">
-          <Link href="/">DAILY</Link>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+          <a href="/">DAILY</a>
           <span className="current-view" aria-current="page">MATRIX</span>
           <span className="exam-date">20/21 NOV</span>
         </div>
