@@ -117,7 +117,7 @@ const knee = cases('knee', [
 
 const hip = cases('hip', [
   ['Umstellungsosteotomien Hüfte', 'Hüfte', 'M5'],
-  ['Hüftdysplasie', 'Hüfte', 'M5'],
+  ['Hüftdysplasie', 'Hüfte', 'M5 · H5.4 · 216–240'],
   ['FAI', 'Hüfte', 'M4'],
   ['Torsionswinkel Hüfte', 'Hüfte', 'M4'],
   ['Beckenosteotomie', 'Hüfte', 'M5'],
@@ -132,46 +132,47 @@ const hip = cases('hip', [
 const spine = cases('spine', [
   ['Diskushernien', 'WS', 'M8'],
   ['Spinalkanalstenose', 'WS', 'M8'],
-  ['Adolescente Scoliose', 'WS', 'M8'],
+  ['Adolescente Scoliose', 'WS', 'M8 · H4.4 · 95–119'],
   ['Spondylolisthesen', 'WS', 'M8'],
   ['M. Bechterew', 'WS', 'M8'],
   ['12J mit Spondylolisthesis grad III mit verlängerter pars (Isthmisch Wiltse IIb), spina bifida occulta', 'WS', 'M8'],
   ['TLIF', 'WS', 'M8'],
 ]);
 
-export const phases: StudyPhase[] = [
-  { id: 'trauma', name: 'Trauma', start: '2026-08-25', end: '2026-09-13', window: '25 AUG – 13 SEP', miller: 'M11 · M8 SPINE', pages: '810–869 · 721–740', items: trauma },
-  { id: 'upper', name: 'Upper extremity', start: '2026-09-14', end: '2026-09-27', window: '14 – 27 SEP', miller: 'M4 · M5 · M7', pages: '326–357 · 468–475 · 589–684', items: upperExtremity },
-  { id: 'foot', name: 'Foot & ankle', start: '2026-09-28', end: '2026-10-11', window: '28 SEP – 11 OCT', miller: 'M6', pages: '480–588', items: foot },
-  { id: 'knee', name: 'Knee', start: '2026-10-12', end: '2026-10-25', window: '12 – 25 OCT', miller: 'M4 · M5 · M11', pages: '284–320 · 415–468 · 842–848', items: knee },
-  { id: 'hip', name: 'Hip', start: '2026-10-26', end: '2026-11-08', window: '26 OCT – 08 NOV', miller: 'M4 · M5 · M11', pages: '320–325 · 370–414 · 825–841', items: hip },
-  { id: 'spine', name: 'Spine', start: '2026-11-09', end: '2026-11-15', window: '09 – 15 NOV', miller: 'M8', pages: '685–744', items: spine },
-];
-
 const paediatrics = cases('reserve-peds', [
-  ['Neurofibromatose', 'Peds', 'M3 + M9'],
-  ['CP', 'Peds', 'M3 + M10'],
-  ['Osgood Schlatter', 'Peds', 'M3 + M4'],
-  ['Tibia Bowing', 'Peds', 'M3'],
-  ['Sichelfuss/Metatarsus adductus', 'Peds', 'M3 + M6'],
-  ['Vertical talus', 'Peds', 'M3 + M6'],
-  ['Klumpfuss', 'Peds', 'M3 + M6'],
-  ['Coalitio', 'Peds', 'M3 + M6'],
-  ['SCFE', 'Peds', 'M3 + M5'],
-  ['M. Perthes', 'Peds', 'M3 + M5'],
-  ['M. Blount', 'Peds', 'M3 + M5'],
-  ['Kongenitale Tibiapseudarthrose', 'Peds', 'M3'],
-  ['Salter-Harris und Übergangsfrakturen', 'Peds', 'M3 + M11'],
-  ['Kindesmisshandlung', 'Peds', 'M3 + M11'],
-  ['Schenkelhalsfrakturen Kind', 'Peds', 'M3 + M11'],
-  ['Femurfrakturen Kind (D-Klassifikation)', 'Peds', 'M3 + M11'],
-  ['Ellenbogenluxations Kind', 'Peds', 'M3 + M11'],
-  ['Radiusfraktur Kind', 'Peds', 'M3 + M11'],
-  ['Suprakondyläre Kind', 'Peds', 'M3 + M11'],
-  ['Salter Harris III Fraktur distales Femur', 'Peds', 'M3 + M11'],
-  ['Unicameral bone cyst zufallsbefund bei femurfraktur beim kind', 'Peds', 'M3 + M9'],
-  ['Idiopathische Beinlängendifferenz mit VKB Aplasie', 'Peds', 'M3'],
+  ['Neurofibromatose', 'HEFTI', 'H14.2.29.7–9 / H4.11.1 · M3+M9 · 163–164 / 812–814'],
+  ['CP', 'HEFTI', 'H15.3.1 · M3+M10 · 877–881'],
+  ['Osgood Schlatter', 'HEFTI', 'H6.3.3 · M3+M4 · 339–340'],
+  ['Tibia Bowing', 'HEFTI', 'H6.6.6–7 · M3 · 370–374'],
+  ['Sichelfuss/Metatarsus adductus', 'HEFTI', 'H7.6 · M3+M6 · 471–474'],
+  ['Vertical talus', 'HEFTI', 'H7.4 · M3+M6 · 451–455'],
+  ['Klumpfuss', 'HEFTI', 'H7.3 · M3+M6 · 435–450'],
+  ['Coalitio', 'HEFTI', 'H7.5.2 · M3+M6 · 458–461'],
+  ['SCFE', 'HEFTI', 'H5.6 · M3+M5 · 255–264'],
+  ['M. Perthes', 'HEFTI', 'H5.5 · M3+M5 · 241–254'],
+  ['M. Blount', 'HEFTI', 'H10.1 · M3+M5 · 639–640'],
+  ['Kongenitale Tibiapseudarthrose', 'HEFTI', 'H6.6.6 · M3 · 370–373'],
+  ['Salter-Harris und Übergangsfrakturen', 'HEFTI', 'H9.3.3 / H7.11.1 · M3+M11 · 511–515 / 618–619'],
+  ['Kindesmisshandlung', 'HEFTI', 'H9.4.2 · M3+M11 · 620–621'],
+  ['Schenkelhalsfrakturen Kind', 'HEFTI', 'H5.9.2 · M3+M11 · 294–297'],
+  ['Femurfrakturen Kind (D-Klassifikation)', 'HEFTI', 'H5.9.3 · M3+M11 · 298–300'],
+  ['Ellenbogenluxations Kind', 'HEFTI', 'H8.7.11 · M3+M11 · 591–592'],
+  ['Radiusfraktur Kind', 'HEFTI', 'H8.7.13–14 · M3+M11 · 595–600'],
+  ['Suprakondyläre Kind', 'HEFTI', 'H8.7.6 · M3+M11 · 580–584'],
+  ['Salter Harris III Fraktur distales Femur', 'HEFTI', 'H6.9.1 · M3+M11 · 394–397'],
+  ['Unicameral bone cyst zufallsbefund bei femurfraktur beim kind', 'HEFTI', 'H13.2.7.1 / H9.4.3 · M3+M9 · 621 / 709–711'],
+  ['Idiopathische Beinlängendifferenz mit VKB Aplasie', 'HEFTI', 'H10.2 / H6.6.5 · M3 · 369–370 / 645–658'],
 ]);
+
+export const phases: StudyPhase[] = [
+  { id: 'trauma', name: 'Trauma', start: '2026-08-25', end: '2026-09-27', window: '25 AUG – 27 SEP', miller: 'M11 · M8 SPINE', pages: '810–869 · 721–740', items: trauma },
+  { id: 'upper', name: 'Upper extremity', start: '2026-09-28', end: '2026-10-05', window: '28 SEP – 05 OCT', miller: 'M4 · M5 · M7', pages: '326–357 · 468–475 · 589–684', items: upperExtremity },
+  { id: 'foot', name: 'Foot & ankle', start: '2026-10-06', end: '2026-10-11', window: '06 – 11 OCT', miller: 'M6', pages: '480–588', items: foot },
+  { id: 'knee', name: 'Knee', start: '2026-10-12', end: '2026-10-19', window: '12 – 19 OCT', miller: 'M4 · M5 · M11', pages: '284–320 · 415–468 · 842–848', items: knee },
+  { id: 'hip', name: 'Hip', start: '2026-10-20', end: '2026-10-27', window: '20 – 27 OCT', miller: 'M4 · M5 · M11', pages: '320–325 · 370–414 · 825–841', items: hip },
+  { id: 'peds', name: 'Paediatrics', start: '2026-10-28', end: '2026-11-11', window: '28 OCT – 11 NOV', miller: 'HEFTI 3E · MILLER M3', pages: 'H4–10 · H13–15', items: paediatrics },
+  { id: 'spine', name: 'Spine', start: '2026-11-12', end: '2026-11-16', window: '12 – 16 NOV', miller: 'M8', pages: '685–744', items: spine },
+];
 
 const general = cases('reserve-general', [
   ['Kristallarthropathie', 'mixed', 'M1'],
@@ -182,11 +183,10 @@ const general = cases('reserve-general', [
 ]);
 
 export const reserveGroups = [
-  { name: 'PAEDIATRICS · CASE LIST', items: paediatrics },
   { name: 'GENERAL · CASE LIST', items: general },
 ];
 
-export const sideChapters = cases('side', [
+const allSideChapters = cases('side', [
   ['Basic Sciences · pp 1–96', 'MILLER', 'M1'],
   ['Anatomy · pp 97–214', 'MILLER', 'M2'],
   ['Pediatric Orthopaedics · pp 215–283', 'MILLER', 'M3'],
@@ -195,3 +195,5 @@ export const sideChapters = cases('side', [
   ['Principles of Practice · pp 870–877', 'MILLER', 'M12'],
   ['Biostatistics and Research Design · pp 878–891', 'MILLER', 'M13'],
 ]);
+
+export const sideChapters = allSideChapters.filter((item) => item.id !== 'side-03');

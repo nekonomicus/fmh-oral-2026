@@ -4,8 +4,10 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { phases, reserveGroups, sideChapters, type CaseItem, type StudyPhase } from './study-data';
 
 const STORAGE_KEY = 'fmh-oral-26-v1';
-const EXAM_DATE = new Date(2026, 10, 19, 12);
-const FINAL_START = new Date(2026, 10, 16, 12);
+const EXAM_START = new Date(2026, 10, 20, 12);
+const EXAM_END = new Date(2026, 10, 21, 12);
+const FINAL_START = new Date(2026, 10, 17, 12);
+const FINAL_END = new Date(2026, 10, 19, 12);
 
 type TrackerState = {
   completed: string[];
@@ -17,6 +19,10 @@ const emptyState: TrackerState = { completed: [], daily: {}, mocks: [] };
 const coreCases = phases.flatMap((phase) => phase.items);
 const reserveCases = reserveGroups.flatMap((group) => group.items);
 const allCases = [...coreCases, ...reserveCases];
+const traumaCases = phases.find((phase) => phase.id === 'trauma')?.items ?? [];
+const paediatricCases = phases.find((phase) => phase.id === 'peds')?.items ?? [];
+const adultOrthoCount = coreCases.length - traumaCases.length - paediatricCases.length;
+const nonTraumaCases = phases.filter((phase) => phase.id !== 'trauma').flatMap((phase) => phase.items);
 
 function localDate(iso: string) {
   const [year, month, day] = iso.split('-').map(Number);
@@ -48,23 +54,42 @@ function currentAssignments(date: Date, completed: Set<string>) {
   const phase = phaseFor(date);
   const weekend = date.getDay() === 0 || date.getDay() === 6;
 
-  if (date >= FINAL_START && date <= EXAM_DATE) {
-    const trauma = phases[0].items.filter((item) => !completed.has(item.id));
-    const ortho = phases.slice(1).flatMap((item) => item.items).filter((item) => !completed.has(item.id));
-    return [trauma[0], ortho[0], trauma[1], ortho[1]].filter(Boolean).map((item) => item.id);
+  if (date >= EXAM_START) return [];
+
+  if (date >= FINAL_START && date <= FINAL_END) {
+    const offset = calendarDaysBetween(FINAL_START, date) * 2;
+    const picks = [
+      traumaCases[offset % traumaCases.length],
+      nonTraumaCases[offset % nonTraumaCases.length],
+      traumaCases[(offset + 1) % traumaCases.length],
+      nonTraumaCases[(offset + 1) % nonTraumaCases.length],
+    ];
+    return picks.filter(Boolean).map((item) => item.id);
   }
 
-  const firstPool = (phase?.items ?? coreCases).filter((item) => !completed.has(item.id));
-  const fallback = coreCases.filter((item) => !completed.has(item.id) && !firstPool.some((pick) => pick.id === item.id));
-  return [...firstPool, ...fallback].slice(0, weekend ? 3 : 2).map((item) => item.id);
+  const phaseIndex = phase ? phases.findIndex((item) => item.id === phase.id) : -1;
+  if (phaseIndex < 0) {
+    return coreCases.filter((item) => !completed.has(item.id)).slice(0, weekend ? 2 : 1).map((item) => item.id);
+  }
+
+  const dueCases = phases.slice(0, phaseIndex + 1).flatMap((item) => item.items).filter((item) => !completed.has(item.id));
+  if (dueCases.length === 0) return [];
+  const remainingDays = Math.max(1, calendarDaysBetween(date, localDate(phase.end)) + 1);
+  const quota = Math.max(1, Math.min(weekend ? 3 : 2, Math.ceil(dueCases.length / remainingDays)));
+  return dueCases.slice(0, quota).map((item) => item.id);
 }
 
 function normalizeState(value: unknown): TrackerState {
   if (!value || typeof value !== 'object') return emptyState;
   const candidate = value as Partial<TrackerState>;
+  const daily = candidate.daily && typeof candidate.daily === 'object'
+    ? Object.fromEntries(Object.entries(candidate.daily)
+      .filter(([, items]) => Array.isArray(items))
+      .map(([key, items]) => [key, (items as unknown[]).filter((item): item is string => typeof item === 'string')]))
+    : {};
   return {
     completed: Array.isArray(candidate.completed) ? candidate.completed.filter((item): item is string => typeof item === 'string') : [],
-    daily: candidate.daily && typeof candidate.daily === 'object' ? candidate.daily as Record<string, string[]> : {},
+    daily,
     mocks: Array.isArray(candidate.mocks) ? candidate.mocks.filter((item): item is string => typeof item === 'string') : [],
   };
 }
@@ -74,6 +99,8 @@ export default function Home() {
   const todayKey = dateKey(today);
   const activePhase = phaseFor(today);
   const weekend = today.getDay() === 0 || today.getDay() === 6;
+  const isFinalReview = today >= FINAL_START && today <= FINAL_END;
+  const isExamWindow = today >= EXAM_START && today <= EXAM_END;
   const [tracker, setTracker] = useState<TrackerState>(emptyState);
   const [ready, setReady] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(activePhase?.id ?? 'trauma');
@@ -115,7 +142,7 @@ export default function Home() {
   const completeCore = coreCases.filter((item) => completed.has(item.id)).length;
   const completeReserve = [...reserveCases, ...sideChapters].filter((item) => completed.has(item.id)).length;
   const overall = percent(completeCore, coreCases.length);
-  const daysLeft = Math.max(0, calendarDaysBetween(today, EXAM_DATE));
+  const daysLeft = Math.max(0, calendarDaysBetween(today, EXAM_START));
   const todayItems = (tracker.daily[todayKey] ?? [])
     .map((id) => allCases.find((item) => item.id === id))
     .filter((item): item is CaseItem => Boolean(item));
@@ -168,7 +195,7 @@ export default function Home() {
           <button type="button" onClick={exportProgress}>BACKUP</button>
           <button type="button" onClick={() => importRef.current?.click()}>RESTORE</button>
           <input ref={importRef} className="file-input" type="file" accept="application/json" onChange={importProgress} />
-          <span className="exam-date">19 NOV · {daysLeft} DAYS</span>
+          <span className="exam-date">20/21 NOV · {daysLeft} DAYS</span>
         </div>
       </header>
 
@@ -180,7 +207,11 @@ export default function Home() {
         <div className="overall" aria-label={`Overall progress ${overall} percent`}>
           <div className="overall-value"><strong>{overall}%</strong><span>{completeCore} / {coreCases.length}</span></div>
           <div className="progress-track"><span style={{ width: `${overall}%` }} /></div>
-          <div className="overall-split"><span>48 TRAUMA</span><span>48 ORTHO</span></div>
+          <div className="overall-split">
+            <span>{traumaCases.length} TRAUMA</span>
+            <span>{adultOrthoCount} ORTHO</span>
+            <span>{paediatricCases.length} PEDS</span>
+          </div>
         </div>
       </section>
 
@@ -191,11 +222,17 @@ export default function Home() {
         </div>
         <div className="today-list">
           {ready && todayItems.length === 0 ? (
-            <div className="empty-state">CORE COMPLETE</div>
+            <div className="empty-state">{isExamWindow || today > EXAM_END ? 'EXAM WINDOW' : 'CORE COMPLETE'}</div>
           ) : todayItems.map((item) => (
-            <CaseRow key={item.id} item={item} done={completed.has(item.id)} onToggle={toggleCase} prominent />
+            <CaseRow
+              key={item.id}
+              item={item}
+              done={isFinalReview ? tracker.mocks.includes(`review-${todayKey}-${item.id}`) : completed.has(item.id)}
+              onToggle={isFinalReview ? (id) => toggleMock(`review-${todayKey}-${id}`) : toggleCase}
+              prominent
+            />
           ))}
-          {weekend && (
+          {weekend && !isFinalReview && today < EXAM_START && (
             <button
               type="button"
               className={`mock-row ${tracker.mocks.includes(`weekend-${todayKey}`) ? 'done' : ''}`}
@@ -242,9 +279,9 @@ export default function Home() {
         </div>
 
         <div className="final-block">
-          <div><span className="phase-index">07</span><strong>Final mix</strong><span className="phase-dates">16–18 NOV</span></div>
+          <div><span className="phase-index">{String(phases.length + 1).padStart(2, '0')}</span><strong>Final mix</strong><span className="phase-dates">17–19 NOV</span></div>
           <div className="final-mocks">
-            {['16 NOV', '17 NOV', '18 NOV'].map((label, index) => {
+            {['17 NOV', '18 NOV', '19 NOV'].map((label, index) => {
               const id = `final-${index + 1}`;
               return (
                 <button key={id} type="button" className={tracker.mocks.includes(id) ? 'done' : ''} onClick={() => toggleMock(id)}>
@@ -279,7 +316,7 @@ export default function Home() {
         </details>
       </section>
 
-      <footer><span>AUTO-SAVED ON THIS DEVICE</span><span>MILLER 9E · HISTORICAL CASES · FMH 2+2</span></footer>
+      <footer><span>AUTO-SAVED ON THIS DEVICE</span><span>HEFTI 3E · MILLER 9E · FMH 2+2</span></footer>
     </main>
   );
 }

@@ -174,13 +174,14 @@ footer { display: flex; justify-content: space-between; padding-top: 52px; color
 
 @media (max-width: 760px) {
   .shell { width: min(100% - 28px, 1120px); padding-bottom: 44px; }
-  .topbar { height: 58px; }
-  .top-actions { gap: 12px; }
-  .top-actions button { display: none; }
-  .exam-date { margin: 0; }
+  .topbar { height: auto; min-height: 82px; flex-direction: column; align-items: stretch; justify-content: center; gap: 10px; }
+  .top-actions { width: 100%; gap: 14px; }
+  .top-actions button { display: block; padding: 5px 0; font-size: 8px; }
+  .exam-date { margin-left: auto; white-space: nowrap; font-size: 8px; }
   .hero { min-height: 330px; grid-template-columns: 1fr; gap: 58px; align-items: start; padding: 42px 0 34px; }
   h1 { font-size: clamp(62px, 21vw, 88px); }
   .overall { width: 100%; }
+  .overall-split { font-size: 8px; }
   .today-section, .plan-section { padding-top: 32px; }
   .section-line span:last-child { text-align: right; }
   .case-row, .mock-row { min-height: 72px; grid-template-columns: 24px minmax(0, 1fr); gap: 14px; padding-right: 0; }
