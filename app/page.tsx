@@ -38,6 +38,12 @@ function percent(done: number, total: number) {
   return total === 0 ? 0 : Math.round((done / total) * 100);
 }
 
+function calendarDaysBetween(from: Date, to: Date) {
+  const fromUtc = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+  const toUtc = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+  return Math.ceil((toUtc - fromUtc) / 86_400_000);
+}
+
 function currentAssignments(date: Date, completed: Set<string>) {
   const phase = phaseFor(date);
   const weekend = date.getDay() === 0 || date.getDay() === 6;
@@ -109,7 +115,7 @@ export default function Home() {
   const completeCore = coreCases.filter((item) => completed.has(item.id)).length;
   const completeReserve = [...reserveCases, ...sideChapters].filter((item) => completed.has(item.id)).length;
   const overall = percent(completeCore, coreCases.length);
-  const daysLeft = Math.max(0, Math.ceil((EXAM_DATE.getTime() - today.getTime()) / 86_400_000));
+  const daysLeft = Math.max(0, calendarDaysBetween(today, EXAM_DATE));
   const todayItems = (tracker.daily[todayKey] ?? [])
     .map((id) => allCases.find((item) => item.id === id))
     .filter((item): item is CaseItem => Boolean(item));
