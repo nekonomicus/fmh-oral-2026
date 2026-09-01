@@ -2,20 +2,21 @@
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { phases, reserveGroups, sideChapters, type CaseItem, type StudyPhase } from './study-data';
+import { TopicNoteButton, TopicNoteDialog } from './topic-note';
+import {
+  EMPTY_TRACKER_STATE,
+  isTrackerBackup,
+  normalizeTrackerState,
+  readTrackerState,
+  writeTrackerState,
+  type TrackerState,
+} from './tracker-storage';
 
-const STORAGE_KEY = 'fmh-oral-26-v1';
 const EXAM_START = new Date(2026, 10, 20, 12);
 const EXAM_END = new Date(2026, 10, 21, 12);
 const FINAL_START = new Date(2026, 10, 17, 12);
 const FINAL_END = new Date(2026, 10, 19, 12);
 
-type TrackerState = {
-  completed: string[];
-  daily: Record<string, string[]>;
-  mocks: string[];
-};
-
-const emptyState: TrackerState = { completed: [], daily: {}, mocks: [] };
 const coreCases = phases.flatMap((phase) => phase.items);
 const reserveCases = reserveGroups.flatMap((group) => group.items);
 const allCases = [...coreCases, ...reserveCases];
@@ -68,7 +69,7 @@ function currentAssignments(date: Date, completed: Set<string>) {
   }
 
   const phaseIndex = phase ? phases.findIndex((item) => item.id === phase.id) : -1;
-  if (phaseIndex < 0) {
+  if (!phase || phaseIndex < 0) {
     return coreCases.filter((item) => !completed.has(item.id)).slice(0, weekend ? 2 : 1).map((item) => item.id);
   }
 
@@ -79,21 +80,6 @@ function currentAssignments(date: Date, completed: Set<string>) {
   return dueCases.slice(0, quota).map((item) => item.id);
 }
 
-function normalizeState(value: unknown): TrackerState {
-  if (!value || typeof value !== 'object') return emptyState;
-  const candidate = value as Partial<TrackerState>;
-  const daily = candidate.daily && typeof candidate.daily === 'object'
-    ? Object.fromEntries(Object.entries(candidate.daily)
-      .filter(([, items]) => Array.isArray(items))
-      .map(([key, items]) => [key, (items as unknown[]).filter((item): item is string => typeof item === 'string')]))
-    : {};
-  return {
-    completed: Array.isArray(candidate.completed) ? candidate.completed.filter((item): item is string => typeof item === 'string') : [],
-    daily,
-    mocks: Array.isArray(candidate.mocks) ? candidate.mocks.filter((item): item is string => typeof item === 'string') : [],
-  };
-}
-
 export default function Home() {
   const [today, setToday] = useState(new Date(2026, 7, 25, 12));
   const todayKey = dateKey(today);
@@ -101,9 +87,13 @@ export default function Home() {
   const weekend = today.getDay() === 0 || today.getDay() === 6;
   const isFinalReview = today >= FINAL_START && today <= FINAL_END;
   const isExamWindow = today >= EXAM_START && today <= EXAM_END;
-  const [tracker, setTracker] = useState<TrackerState>(emptyState);
+  const [tracker, setTracker] = useState<TrackerState>(EMPTY_TRACKER_STATE);
   const [ready, setReady] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(activePhase?.id ?? 'trauma');
+  const [activeNote, setActiveNote] = useState<CaseItem | null>(null);
+  const [saveError, setSaveError] = useState(false);
+  const trackerRef = useRef<TrackerState>(EMPTY_TRACKER_STATE);
+  const dirtyRef = useRef(false);
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -111,12 +101,8 @@ export default function Home() {
     actualToday.setHours(12, 0, 0, 0);
     const actualKey = dateKey(actualToday);
     const actualPhase = phaseFor(actualToday);
-    let loaded = emptyState;
-    try {
-      loaded = normalizeState(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'));
-    } catch {
-      loaded = emptyState;
-    }
+    let loaded = readTrackerState();
+    let initialSaveError = false;
 
     if (!loaded.daily[actualKey]) {
       const completed = new Set(loaded.completed);
@@ -124,21 +110,43 @@ export default function Home() {
         ...loaded,
         daily: { ...loaded.daily, [actualKey]: currentAssignments(actualToday, completed) },
       };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(loaded));
+      initialSaveError = !writeTrackerState(loaded);
     }
 
     const initialSync = window.setTimeout(() => {
       setToday(actualToday);
+      trackerRef.current = loaded;
+      dirtyRef.current = initialSaveError;
       setTracker(loaded);
+      setSaveError(initialSaveError);
       setExpanded(actualPhase?.id ?? 'spine');
       setReady(true);
     }, 0);
-    return () => window.clearTimeout(initialSync);
+
+    const syncFromStorage = () => {
+      if (dirtyRef.current) return;
+      const next = readTrackerState();
+      trackerRef.current = next;
+      setTracker(next);
+    };
+    window.addEventListener('storage', syncFromStorage);
+    return () => {
+      window.clearTimeout(initialSync);
+      window.removeEventListener('storage', syncFromStorage);
+    };
   }, []);
 
-  const save = (next: TrackerState) => {
+  const persist = (next: TrackerState) => {
+    trackerRef.current = next;
     setTracker(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    const saved = writeTrackerState(next);
+    dirtyRef.current = !saved;
+    setSaveError(!saved);
+  };
+
+  const mutate = (update: (current: TrackerState) => TrackerState) => {
+    const current = dirtyRef.current ? trackerRef.current : readTrackerState();
+    persist(update(current));
   };
 
   const completed = new Set(tracker.completed);
@@ -151,17 +159,30 @@ export default function Home() {
     .filter((item): item is CaseItem => Boolean(item));
 
   const toggleCase = (id: string) => {
-    const next = new Set(tracker.completed);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    save({ ...tracker, completed: [...next] });
+    mutate((current) => {
+      const next = new Set(current.completed);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { ...current, completed: [...next] };
+    });
   };
 
   const toggleMock = (id: string) => {
-    const next = new Set(tracker.mocks);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    save({ ...tracker, mocks: [...next] });
+    mutate((current) => {
+      const next = new Set(current.mocks);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { ...current, mocks: [...next] };
+    });
+  };
+
+  const saveNote = (id: string, value: string) => {
+    mutate((current) => {
+      const notes = { ...current.notes };
+      if (value.length > 0) notes[id] = value;
+      else delete notes[id];
+      return { ...current, notes };
+    });
   };
 
   const exportProgress = () => {
@@ -180,8 +201,13 @@ export default function Home() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const next = normalizeState(JSON.parse(String(reader.result)));
-        save(next);
+        const source = JSON.parse(String(reader.result));
+        if (!isTrackerBackup(source)) throw new Error('Invalid tracker backup');
+        const restored = normalizeTrackerState(source);
+        const next = Object.prototype.hasOwnProperty.call(source, 'notes')
+          ? restored
+          : { ...restored, notes: trackerRef.current.notes };
+        persist(next);
       } catch {
         // An invalid backup leaves the current tracker untouched.
       }
@@ -233,6 +259,8 @@ export default function Home() {
               item={item}
               done={isFinalReview ? tracker.mocks.includes(`review-${todayKey}-${item.id}`) : completed.has(item.id)}
               onToggle={isFinalReview ? (id) => toggleMock(`review-${todayKey}-${id}`) : toggleCase}
+              hasNote={Boolean(tracker.notes[item.id]?.trim())}
+              onOpenNote={setActiveNote}
               prominent
             />
           ))}
@@ -272,7 +300,14 @@ export default function Home() {
                     <div className="chapter-strip"><span>{phase.miller}</span><span>{phase.pages}</span></div>
                     <div className="case-list">
                       {phase.items.map((item) => (
-                        <CaseRow key={item.id} item={item} done={completed.has(item.id)} onToggle={toggleCase} />
+                        <CaseRow
+                          key={item.id}
+                          item={item}
+                          done={completed.has(item.id)}
+                          onToggle={toggleCase}
+                          hasNote={Boolean(tracker.notes[item.id]?.trim())}
+                          onOpenNote={setActiveNote}
+                        />
                       ))}
                     </div>
                   </div>
@@ -309,36 +344,84 @@ export default function Home() {
             {reserveGroups.map((group) => (
               <div className="reserve-group" key={group.name}>
                 <div className="chapter-strip"><span>{group.name}</span><span>{group.items.length}</span></div>
-                {group.items.map((item) => <CaseRow key={item.id} item={item} done={completed.has(item.id)} onToggle={toggleCase} />)}
+                {group.items.map((item) => (
+                  <CaseRow
+                    key={item.id}
+                    item={item}
+                    done={completed.has(item.id)}
+                    onToggle={toggleCase}
+                    hasNote={Boolean(tracker.notes[item.id]?.trim())}
+                    onOpenNote={setActiveNote}
+                  />
+                ))}
               </div>
             ))}
             <div className="reserve-group">
               <div className="chapter-strip"><span>MILLER OUTSIDE CORE</span><span>{sideChapters.length}</span></div>
-              {sideChapters.map((item) => <CaseRow key={item.id} item={item} done={completed.has(item.id)} onToggle={toggleCase} />)}
+              {sideChapters.map((item) => (
+                <CaseRow
+                  key={item.id}
+                  item={item}
+                  done={completed.has(item.id)}
+                  onToggle={toggleCase}
+                  hasNote={Boolean(tracker.notes[item.id]?.trim())}
+                  onOpenNote={setActiveNote}
+                />
+              ))}
             </div>
           </div>
         </details>
       </section>
 
-      <footer><span>AUTO-SAVED ON THIS DEVICE</span><span>HEFTI 3E · MILLER 9E · FMH 2+2</span></footer>
+      <footer>
+        <span className={saveError ? 'save-warning' : ''}>{saveError ? 'SAVE FAILED · OPEN THE NOTE TO DOWNLOAD A COPY' : 'AUTO-SAVED ON THIS DEVICE'}</span>
+        <span>HEFTI 3E · MILLER 9E · FMH 2+2</span>
+      </footer>
+      {activeNote && (
+        <TopicNoteDialog
+          item={activeNote}
+          value={tracker.notes[activeNote.id] ?? ''}
+          onChange={(value) => saveNote(activeNote.id, value)}
+          onClose={() => setActiveNote(null)}
+          saveError={saveError}
+        />
+      )}
     </main>
   );
 }
 
-function CaseRow({ item, done, onToggle, prominent = false }: { item: CaseItem; done: boolean; onToggle: (id: string) => void; prominent?: boolean }) {
+function CaseRow({
+  item,
+  done,
+  onToggle,
+  hasNote,
+  onOpenNote,
+  prominent = false,
+}: {
+  item: CaseItem;
+  done: boolean;
+  onToggle: (id: string) => void;
+  hasNote: boolean;
+  onOpenNote: (item: CaseItem) => void;
+  prominent?: boolean;
+}) {
   return (
-    <button
-      type="button"
-      className={`case-row ${prominent ? 'prominent' : ''} ${done ? 'done' : ''}`}
-      onClick={() => onToggle(item.id)}
-      aria-pressed={done}
-    >
-      <span className="check" aria-hidden="true" />
-      <span className="case-copy">
-        <span className="case-title">{item.title}</span>
-        <span className="case-meta">{item.source} · {item.miller}</span>
-      </span>
-      {prominent && <span className="case-time">30 MIN</span>}
-    </button>
+    <div className={`case-row ${prominent ? 'prominent' : ''} ${done ? 'done' : ''}`}>
+      <button
+        type="button"
+        className="case-row-toggle"
+        onClick={() => onToggle(item.id)}
+        aria-pressed={done}
+        aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}`}
+      >
+        <span className="check" aria-hidden="true" />
+        <span className="case-copy">
+          <span className="case-title">{item.title}</span>
+          <span className="case-meta">{item.source} · {item.miller}</span>
+        </span>
+        {prominent && <span className="case-time">30 MIN</span>}
+      </button>
+      <TopicNoteButton item={item} hasNote={hasNote} onOpen={onOpenNote} className="case-note-trigger" />
+    </div>
   );
 }

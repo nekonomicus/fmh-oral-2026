@@ -2,8 +2,14 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { phases, reserveGroups, type CaseItem } from '../study-data';
+import { TopicNoteButton, TopicNoteDialog } from '../topic-note';
+import {
+  EMPTY_TRACKER_STATE,
+  readTrackerState,
+  writeTrackerState,
+  type TrackerState,
+} from '../tracker-storage';
 
-const STORAGE_KEY = 'fmh-oral-26-v1';
 const rawCases = [...phases.flatMap((phase) => phase.items), ...reserveGroups.flatMap((group) => group.items)];
 const phaseItems = (id: string) => phases.find((phase) => phase.id === id)?.items ?? [];
 const traumaItems = phaseItems('trauma');
@@ -68,24 +74,6 @@ const sectors: Sector[] = [
   },
 ];
 
-function readStore(): Record<string, unknown> {
-  try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  } catch {
-    return {};
-  }
-}
-
-function completedFrom(stored: Record<string, unknown>) {
-  const items = Array.isArray(stored.completed) ? stored.completed : [];
-  return new Set(items.filter((item): item is string => typeof item === 'string'));
-}
-
-function readCompleted() {
-  return completedFrom(readStore());
-}
-
 function clusterSpan(count: number) {
   if (count >= 14) return 12;
   if (count >= 7) return 6;
@@ -93,15 +81,19 @@ function clusterSpan(count: number) {
 }
 
 export default function MatrixClient() {
-  const [completed, setCompleted] = useState<Set<string>>(new Set());
-  const completedRef = useRef<Set<string>>(new Set());
+  const [tracker, setTracker] = useState<TrackerState>(EMPTY_TRACKER_STATE);
+  const [activeNote, setActiveNote] = useState<CaseItem | null>(null);
   const [ready, setReady] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+  const trackerRef = useRef<TrackerState>(EMPTY_TRACKER_STATE);
+  const dirtyRef = useRef(false);
 
   useEffect(() => {
     const sync = () => {
-      const next = readCompleted();
-      completedRef.current = next;
-      setCompleted(next);
+      if (dirtyRef.current) return;
+      const next = readTrackerState();
+      trackerRef.current = next;
+      setTracker(next);
     };
     const initialSync = window.setTimeout(() => {
       sync();
@@ -114,22 +106,40 @@ export default function MatrixClient() {
     };
   }, []);
 
-  const toggleCase = (id: string) => {
-    if (!ready) return;
-    const next = new Set(completedRef.current);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    completedRef.current = next;
-    setCompleted(next);
-    const stored = readStore();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      ...stored,
-      completed: [...next],
-      daily: stored.daily && typeof stored.daily === 'object' && !Array.isArray(stored.daily) ? stored.daily : {},
-      mocks: Array.isArray(stored.mocks) ? stored.mocks : [],
-    }));
+  const persist = (next: TrackerState) => {
+    trackerRef.current = next;
+    setTracker(next);
+    const saved = writeTrackerState(next);
+    dirtyRef.current = !saved;
+    setSaveError(!saved);
   };
 
+  const mutate = (update: (current: TrackerState) => TrackerState) => {
+    const current = dirtyRef.current ? trackerRef.current : readTrackerState();
+    persist(update(current));
+  };
+
+  const toggleCase = (id: string) => {
+    if (!ready) return;
+    mutate((current) => {
+      const completed = new Set(current.completed);
+      if (completed.has(id)) completed.delete(id);
+      else completed.add(id);
+      return { ...current, completed: [...completed] };
+    });
+  };
+
+  const saveNote = (id: string, value: string) => {
+    mutate((current) => {
+      const notes = { ...current.notes };
+      if (value.length > 0) notes[id] = value;
+      else delete notes[id];
+      return { ...current, notes };
+    });
+  };
+
+  const completed = new Set(tracker.completed);
+  const notes = tracker.notes;
   const doneCount = rawCases.filter((item) => completed.has(item.id)).length;
   const progress = Math.round((doneCount / rawCases.length) * 100);
 
@@ -191,19 +201,30 @@ export default function MatrixClient() {
                         {cluster.items.map((item) => {
                           const done = completed.has(item.id);
                           return (
-                            <button
-                              type="button"
-                              className={`matrix-tile ${item.title.length > 70 ? 'long' : ''} ${done ? 'done' : ''}`}
+                            <div
+                              className={`matrix-tile-wrap ${item.title.length > 70 ? 'long' : ''} ${done ? 'done' : ''}`}
                               key={item.id}
-                              onClick={() => toggleCase(item.id)}
-                              disabled={!ready}
-                              aria-pressed={done}
-                              aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}`}
                             >
-                              <span className="matrix-case-title">{item.title}</span>
-                              <span className="matrix-case-meta">{item.source} · {item.miller}</span>
-                              <span className="matrix-status" aria-hidden="true">{done ? '✓' : ''}</span>
-                            </button>
+                              <button
+                                type="button"
+                                className={`matrix-tile ${done ? 'done' : ''}`}
+                                onClick={() => toggleCase(item.id)}
+                                disabled={!ready}
+                                aria-pressed={done}
+                                aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}`}
+                              >
+                                <span className="matrix-case-title">{item.title}</span>
+                                <span className="matrix-case-meta">{item.source} · {item.miller}</span>
+                                <span className="matrix-status" aria-hidden="true">{done ? '✓' : ''}</span>
+                              </button>
+                              <TopicNoteButton
+                                item={item}
+                                hasNote={Boolean(notes[item.id]?.trim())}
+                                onOpen={setActiveNote}
+                                className="matrix-note-trigger"
+                                disabled={!ready}
+                              />
+                            </div>
                           );
                         })}
                       </div>
@@ -216,7 +237,19 @@ export default function MatrixClient() {
         })}
       </section>
 
-      <footer><span>CLICK TO UPDATE</span><span>{rawCases.length} HISTORICAL CASES · LIVE PROGRESS</span></footer>
+      <footer>
+        <span className={saveError ? 'save-warning' : ''}>{saveError ? 'SAVE FAILED · OPEN THE NOTE TO DOWNLOAD A COPY' : 'CLICK TO UPDATE'}</span>
+        <span>{rawCases.length} HISTORICAL CASES · LIVE PROGRESS</span>
+      </footer>
+      {activeNote && (
+        <TopicNoteDialog
+          item={activeNote}
+          value={notes[activeNote.id] ?? ''}
+          onChange={(value) => saveNote(activeNote.id, value)}
+          onClose={() => setActiveNote(null)}
+          saveError={saveError}
+        />
+      )}
     </main>
   );
 }
