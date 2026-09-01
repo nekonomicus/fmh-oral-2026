@@ -4,6 +4,13 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { phases, reserveGroups, sideChapters, type CaseItem, type StudyPhase } from './study-data';
 import { TopicNoteButton, TopicNoteDialog } from './topic-note';
 import {
+  exportTopicImagesForBackup,
+  isTopicImageBackup,
+  listTopicIdsWithImages,
+  restoreTopicImagesFromBackup,
+  subscribeToTopicImageChanges,
+} from './topic-images';
+import {
   EMPTY_TRACKER_STATE,
   isTrackerBackup,
   normalizeTrackerState,
@@ -92,6 +99,9 @@ export default function Home() {
   const [expanded, setExpanded] = useState<string | null>(activePhase?.id ?? 'trauma');
   const [activeNote, setActiveNote] = useState<CaseItem | null>(null);
   const [saveError, setSaveError] = useState(false);
+  const [imageTopics, setImageTopics] = useState<Set<string>>(new Set());
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState('');
   const trackerRef = useRef<TrackerState>(EMPTY_TRACKER_STATE);
   const dirtyRef = useRef(false);
   const importRef = useRef<HTMLInputElement>(null);
@@ -133,6 +143,25 @@ export default function Home() {
     return () => {
       window.clearTimeout(initialSync);
       window.removeEventListener('storage', syncFromStorage);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshImageTopics = () => {
+      void listTopicIdsWithImages()
+        .then((topicIds) => {
+          if (!cancelled) setImageTopics(topicIds);
+        })
+        .catch(() => {
+          // The note drawer reports image-storage errors without touching tracker data.
+        });
+    };
+    refreshImageTopics();
+    const unsubscribe = subscribeToTopicImageChanges(refreshImageTopics);
+    return () => {
+      cancelled = true;
+      unsubscribe();
     };
   }, []);
 
@@ -185,31 +214,69 @@ export default function Home() {
     });
   };
 
-  const exportProgress = () => {
-    const blob = new Blob([JSON.stringify(tracker, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `fmh-oral-progress-${todayKey}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+  const hasSavedNote = (id: string) => Boolean(tracker.notes[id]?.trim()) || imageTopics.has(id);
+
+  const exportProgress = async () => {
+    setBackupBusy(true);
+    setBackupMessage('');
+    try {
+      let backup: Record<string, unknown> = { ...trackerRef.current };
+      try {
+        const noteImages = await exportTopicImagesForBackup();
+        backup = { ...backup, backupVersion: 2, noteImages };
+      } catch {
+        setBackupMessage('BACKUP SAVED · IMAGES COULD NOT BE INCLUDED');
+      }
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `fmh-oral-progress-${todayKey}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setBackupMessage('BACKUP FAILED · YOUR CURRENT ENTRIES ARE UNCHANGED');
+    } finally {
+      setBackupBusy(false);
+    }
   };
 
   const importProgress = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
+      const previous = trackerRef.current;
+      let trackerWasWritten = false;
       try {
         const source = JSON.parse(String(reader.result));
         if (!isTrackerBackup(source)) throw new Error('Invalid tracker backup');
+        const includesImages = Object.prototype.hasOwnProperty.call(source, 'noteImages');
+        const noteImages = (source as Record<string, unknown>).noteImages;
+        if (includesImages && !isTopicImageBackup(noteImages)) throw new Error('Invalid image backup');
         const restored = normalizeTrackerState(source);
         const next = Object.prototype.hasOwnProperty.call(source, 'notes')
           ? restored
           : { ...restored, notes: trackerRef.current.notes };
-        persist(next);
+        if (!writeTrackerState(next)) throw new Error('Tracker storage is full');
+        trackerWasWritten = true;
+        if (includesImages && isTopicImageBackup(noteImages)) {
+          await restoreTopicImagesFromBackup(noteImages);
+        }
+        trackerRef.current = next;
+        dirtyRef.current = false;
+        setTracker(next);
+        setSaveError(false);
+        setBackupMessage('');
       } catch {
-        // An invalid backup leaves the current tracker untouched.
+        if (trackerWasWritten) {
+          const rolledBack = writeTrackerState(previous);
+          trackerRef.current = previous;
+          dirtyRef.current = !rolledBack;
+          setTracker(previous);
+          setSaveError(!rolledBack);
+        }
+        setBackupMessage('RESTORE FAILED · YOUR CURRENT ENTRIES WERE KEPT');
       }
     };
     reader.readAsText(file);
@@ -222,7 +289,9 @@ export default function Home() {
         <span className="wordmark">ORAL / 26</span>
         <div className="top-actions">
           <a href="/matrix">MATRIX</a>
-          <button type="button" onClick={exportProgress}>BACKUP</button>
+          <button type="button" onClick={() => void exportProgress()} disabled={backupBusy}>
+            {backupBusy ? 'BACKING UP…' : 'BACKUP'}
+          </button>
           <button type="button" onClick={() => importRef.current?.click()}>RESTORE</button>
           <input ref={importRef} className="file-input" type="file" accept="application/json" onChange={importProgress} />
           <span className="exam-date">20/21 NOV · {daysLeft} DAYS</span>
@@ -259,7 +328,7 @@ export default function Home() {
               item={item}
               done={isFinalReview ? tracker.mocks.includes(`review-${todayKey}-${item.id}`) : completed.has(item.id)}
               onToggle={isFinalReview ? (id) => toggleMock(`review-${todayKey}-${id}`) : toggleCase}
-              hasNote={Boolean(tracker.notes[item.id]?.trim())}
+              hasNote={hasSavedNote(item.id)}
               onOpenNote={setActiveNote}
               prominent
             />
@@ -305,7 +374,7 @@ export default function Home() {
                           item={item}
                           done={completed.has(item.id)}
                           onToggle={toggleCase}
-                          hasNote={Boolean(tracker.notes[item.id]?.trim())}
+                          hasNote={hasSavedNote(item.id)}
                           onOpenNote={setActiveNote}
                         />
                       ))}
@@ -350,7 +419,7 @@ export default function Home() {
                     item={item}
                     done={completed.has(item.id)}
                     onToggle={toggleCase}
-                    hasNote={Boolean(tracker.notes[item.id]?.trim())}
+                    hasNote={hasSavedNote(item.id)}
                     onOpenNote={setActiveNote}
                   />
                 ))}
@@ -364,7 +433,7 @@ export default function Home() {
                   item={item}
                   done={completed.has(item.id)}
                   onToggle={toggleCase}
-                  hasNote={Boolean(tracker.notes[item.id]?.trim())}
+                  hasNote={hasSavedNote(item.id)}
                   onOpenNote={setActiveNote}
                 />
               ))}
@@ -374,7 +443,13 @@ export default function Home() {
       </section>
 
       <footer>
-        <span className={saveError ? 'save-warning' : ''}>{saveError ? 'SAVE FAILED · OPEN THE NOTE TO DOWNLOAD A COPY' : 'AUTO-SAVED ON THIS DEVICE'}</span>
+        <span className={saveError || backupMessage ? 'save-warning' : ''}>
+          {saveError
+            ? 'SAVE FAILED · OPEN THE NOTE TO DOWNLOAD A COPY'
+            : backupMessage
+              ? backupMessage
+              : 'AUTO-SAVED ON THIS DEVICE'}
+        </span>
         <span>HEFTI 3E · MILLER 9E · FMH 2+2</span>
       </footer>
       {activeNote && (

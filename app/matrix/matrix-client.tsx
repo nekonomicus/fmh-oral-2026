@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { phases, reserveGroups, type CaseItem } from '../study-data';
 import { TopicNoteButton, TopicNoteDialog } from '../topic-note';
+import { listTopicIdsWithImages, subscribeToTopicImageChanges } from '../topic-images';
 import {
   EMPTY_TRACKER_STATE,
   readTrackerState,
@@ -85,6 +86,7 @@ export default function MatrixClient() {
   const [activeNote, setActiveNote] = useState<CaseItem | null>(null);
   const [ready, setReady] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [imageTopics, setImageTopics] = useState<Set<string>>(new Set());
   const trackerRef = useRef<TrackerState>(EMPTY_TRACKER_STATE);
   const dirtyRef = useRef(false);
 
@@ -103,6 +105,25 @@ export default function MatrixClient() {
     return () => {
       window.clearTimeout(initialSync);
       window.removeEventListener('storage', sync);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshImageTopics = () => {
+      void listTopicIdsWithImages()
+        .then((topicIds) => {
+          if (!cancelled) setImageTopics(topicIds);
+        })
+        .catch(() => {
+          // The note drawer reports image-storage errors without touching progress.
+        });
+    };
+    refreshImageTopics();
+    const unsubscribe = subscribeToTopicImageChanges(refreshImageTopics);
+    return () => {
+      cancelled = true;
+      unsubscribe();
     };
   }, []);
 
@@ -140,6 +161,7 @@ export default function MatrixClient() {
 
   const completed = new Set(tracker.completed);
   const notes = tracker.notes;
+  const hasSavedNote = (id: string) => Boolean(notes[id]?.trim()) || imageTopics.has(id);
   const doneCount = rawCases.filter((item) => completed.has(item.id)).length;
   const progress = Math.round((doneCount / rawCases.length) * 100);
 
@@ -219,7 +241,7 @@ export default function MatrixClient() {
                               </button>
                               <TopicNoteButton
                                 item={item}
-                                hasNote={Boolean(notes[item.id]?.trim())}
+                                hasNote={hasSavedNote(item.id)}
                                 onOpen={setActiveNote}
                                 className="matrix-note-trigger"
                                 disabled={!ready}
