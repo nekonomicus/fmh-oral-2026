@@ -291,14 +291,33 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
 
   useEffect(() => {
     draftRef.current = draft;
-    const editor = textareaRef.current;
-    if (editor) {
-      editor.style.height = '0px';
-      editor.style.height = `${Math.max(220, editor.scrollHeight)}px`;
-    }
     const saveTimer = window.setTimeout(commit, 250);
     return () => window.clearTimeout(saveTimer);
   }, [commit, draft]);
+
+  // Keep the sheet inside the visible viewport while the on-screen keyboard is open,
+  // so the note stays scrollable to its end on phones.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const viewport = window.visualViewport;
+    if (!dialog || !viewport) return;
+
+    const fit = () => {
+      const keyboardOpen = window.innerHeight - viewport.height > 120;
+      dialog.style.height = keyboardOpen ? `${Math.round(viewport.height)}px` : '';
+      dialog.style.top = keyboardOpen ? `${Math.round(viewport.offsetTop)}px` : '';
+    };
+
+    fit();
+    viewport.addEventListener('resize', fit);
+    viewport.addEventListener('scroll', fit);
+    return () => {
+      viewport.removeEventListener('resize', fit);
+      viewport.removeEventListener('scroll', fit);
+      dialog.style.height = '';
+      dialog.style.top = '';
+    };
+  }, []);
 
   useEffect(() => () => commit(), [commit]);
 
@@ -401,19 +420,23 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
           onDrop={handleDrop}
         >
           {dragActive && <div className="topic-note-drop" aria-hidden="true">DROP IMAGES</div>}
-          <textarea
-            ref={textareaRef}
-            className="topic-note-editor"
-            value={draft}
-            onChange={(event) => {
-              draftRef.current = event.target.value;
-              setDraft(event.target.value);
-            }}
-            onPaste={handlePaste}
-            onBlur={commit}
-            aria-label={`Notes for ${item.title}`}
-            spellCheck
-          />
+          {/* The wrapper's ::after mirrors the text so the editor grows without a JS remeasure,
+              which used to collapse the scroll pane and reset its scroll position on every keystroke. */}
+          <div className="topic-note-grow" data-replica={draft}>
+            <textarea
+              ref={textareaRef}
+              className="topic-note-editor"
+              value={draft}
+              onChange={(event) => {
+                draftRef.current = event.target.value;
+                setDraft(event.target.value);
+              }}
+              onPaste={handlePaste}
+              onBlur={commit}
+              aria-label={`Notes for ${item.title}`}
+              spellCheck
+            />
+          </div>
 
           {imagesLoading ? (
             <div className="topic-note-image-loading" aria-live="polite">LOADING IMAGES…</div>
