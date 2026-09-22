@@ -1,4 +1,6 @@
-import { isPlayerId, normalizeSyncDoc, type PlayerId, type SyncDoc, type SyncSnapshot } from '../../sync';
+import { isPlayerId, normalizeSyncDoc, type FileIndex, type PlayerId, type SyncDoc, type SyncSnapshot } from '../../sync';
+import { GITHUB_API, authorize, githubHeaders, json } from '../auth';
+import { fileIndex, filesStore } from '../files-store';
 
 // Two-player progress store. Each player owns one document; the newer timestamp wins.
 // Data lives in a private Gist on the site owner's GitHub account, so no extra service is needed.
@@ -8,7 +10,6 @@ import { isPlayerId, normalizeSyncDoc, type PlayerId, type SyncDoc, type SyncSna
 
 export const dynamic = 'force-dynamic';
 
-const API = process.env.GITHUB_API_URL ?? 'https://api.github.com';
 const GIST_DESCRIPTION = 'fmh-oral-26 sync · progress for Sam and Michael';
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const PLAYER_FILES: Record<PlayerId, string> = { sam: 'sam.json', michael: 'michael.json' };
@@ -26,38 +27,10 @@ function serverConfig(): ServerConfig | null {
   return { token, code };
 }
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
-  });
-}
-
-function constantTimeEqual(a: string, b: string) {
-  const length = Math.max(a.length, b.length);
-  let mismatch = a.length === b.length ? 0 : 1;
-  for (let index = 0; index < length; index += 1) {
-    mismatch |= (a.charCodeAt(index) || 0) ^ (b.charCodeAt(index) || 0);
-  }
-  return mismatch === 0;
-}
-
-function authorized(request: Request, config: ServerConfig) {
-  const header = request.headers.get('authorization') ?? '';
-  const presented = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  return presented.length > 0 && constantTimeEqual(presented, config.code);
-}
-
 async function github<T>(config: ServerConfig, path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
+  const response = await fetch(`${GITHUB_API}${path}`, {
     ...init,
-    headers: {
-      authorization: `Bearer ${config.token}`,
-      accept: 'application/vnd.github+json',
-      'x-github-api-version': '2022-11-28',
-      'user-agent': 'fmh-oral-2026',
-      ...(init.body ? { 'content-type': 'application/json' } : {}),
-    },
+    headers: githubHeaders(config.token, init.body ? { 'content-type': 'application/json' } : {}),
   });
   if (!response.ok) throw new Error(`GitHub responded ${response.status}`);
   return response.json() as Promise<T>;
@@ -98,6 +71,16 @@ async function fileDoc(config: ServerConfig, file: GistFile | null | undefined):
   }
 }
 
+async function attachmentIndex(): Promise<FileIndex> {
+  const store = filesStore();
+  if (!store) return {};
+  try {
+    return await fileIndex(store);
+  } catch {
+    return {};
+  }
+}
+
 async function readSnapshot(config: ServerConfig): Promise<SyncSnapshot> {
   const id = await findGistId(config);
   let gist: Gist;
@@ -110,6 +93,7 @@ async function readSnapshot(config: ServerConfig): Promise<SyncSnapshot> {
   return {
     sam: await fileDoc(config, gist.files[PLAYER_FILES.sam]),
     michael: await fileDoc(config, gist.files[PLAYER_FILES.michael]),
+    files: await attachmentIndex(),
   };
 }
 
@@ -123,8 +107,8 @@ async function writeDoc(config: ServerConfig, player: PlayerId, doc: SyncDoc) {
 
 export async function GET(request: Request) {
   const config = serverConfig();
-  if (!config) return json({ error: 'unconfigured' }, 503);
-  if (!authorized(request, config)) return json({ error: 'unauthorized' }, 401);
+  if (!config || authorize(request) === null) return json({ error: 'unconfigured' }, 503);
+  if (!authorize(request)) return json({ error: 'unauthorized' }, 401);
   try {
     return json({ snapshot: await readSnapshot(config) });
   } catch {
@@ -134,8 +118,8 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   const config = serverConfig();
-  if (!config) return json({ error: 'unconfigured' }, 503);
-  if (!authorized(request, config)) return json({ error: 'unauthorized' }, 401);
+  if (!config || authorize(request) === null) return json({ error: 'unconfigured' }, 503);
+  if (!authorize(request)) return json({ error: 'unauthorized' }, 401);
 
   const raw = await request.text();
   if (raw.length > MAX_BODY_BYTES) return json({ error: 'too-large' }, 413);

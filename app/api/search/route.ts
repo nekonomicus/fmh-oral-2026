@@ -1,4 +1,5 @@
 import { phases, reserveGroups, sideChapters, type CaseItem } from '../../study-data';
+import { authorize, json } from '../auth';
 
 // Smart search: asks Gemini which cases match a free-text query (synonyms, German/English,
 // clinical descriptions). The instant local text search stays the first pass; this adds to it.
@@ -23,28 +24,6 @@ const SYSTEM_PROMPT = 'You match a search query to orthopaedic oral-exam case ti
   + 'Only include cases clearly relevant to the query; return [] when nothing fits.';
 
 const cache = new Map<string, string[]>();
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
-  });
-}
-
-function constantTimeEqual(a: string, b: string) {
-  const length = Math.max(a.length, b.length);
-  let mismatch = a.length === b.length ? 0 : 1;
-  for (let index = 0; index < length; index += 1) {
-    mismatch |= (a.charCodeAt(index) || 0) ^ (b.charCodeAt(index) || 0);
-  }
-  return mismatch === 0;
-}
-
-function authorized(request: Request, code: string) {
-  const header = request.headers.get('authorization') ?? '';
-  const presented = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  return presented.length > 0 && constantTimeEqual(presented, code);
-}
 
 async function askGemini(apiKey: string, model: string, query: string): Promise<string[]> {
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
@@ -77,9 +56,9 @@ async function askGemini(apiKey: string, model: string, query: string): Promise<
 
 export async function POST(request: Request) {
   const apiKey = process.env.GEMINI_API_KEY;
-  const code = process.env.SYNC_CODE;
-  if (!apiKey || !code) return json({ error: 'unconfigured' }, 503);
-  if (!authorized(request, code)) return json({ error: 'unauthorized' }, 401);
+  const auth = authorize(request);
+  if (!apiKey || auth === null) return json({ error: 'unconfigured' }, 503);
+  if (!auth) return json({ error: 'unauthorized' }, 401);
 
   let query = '';
   try {

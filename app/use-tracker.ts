@@ -18,8 +18,12 @@ import {
   isSyncConfigKey,
   partnerOf,
   pushDoc,
+  tileState,
+  type TileState,
   readSyncConfig,
+  setSyncCookie,
   writeSyncConfig,
+  type FileIndex,
   type SyncConfig,
   type SyncDoc,
   type SyncErrorKind,
@@ -34,6 +38,9 @@ export type TrackerSync = {
   syncedAt: number | null;
   partner: SyncDoc | null;
   partnerDone: Set<string>;
+  /** Shared attachment counts per case and player. */
+  files: FileIndex;
+  refreshFiles: () => void;
   connect: (config: SyncConfig) => Promise<SyncStatus>;
   disconnect: () => void;
 };
@@ -56,6 +63,7 @@ export function useTracker({ prepare, onLoaded }: Options = {}) {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('off');
   const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [partner, setPartner] = useState<SyncDoc | null>(null);
+  const [files, setFiles] = useState<FileIndex>({});
 
   const trackerRef = useRef<TrackerState>(EMPTY_TRACKER_STATE);
   const updatedAtRef = useRef(0);
@@ -88,6 +96,7 @@ export function useTracker({ prepare, onLoaded }: Options = {}) {
       loadLocal();
       const config = readSyncConfig();
       configRef.current = config;
+      if (config) setSyncCookie(config.code);
       setSyncConfig(config);
       setReady(true);
       onLoadedRef.current?.();
@@ -141,6 +150,7 @@ export function useTracker({ prepare, onLoaded }: Options = {}) {
 
   const applySnapshot = useCallback((config: SyncConfig, snapshot: SyncSnapshot) => {
     setPartner(snapshot[partnerOf(config.player)]);
+    setFiles(snapshot.files);
     setSyncStatus('synced');
     setSyncedAt(Date.now());
   }, []);
@@ -294,25 +304,47 @@ export function useTracker({ prepare, onLoaded }: Options = {}) {
       return result;
     }
     writeSyncConfig(config);
+    setSyncCookie(config.code);
     setSyncConfig(config);
     return result;
   }, [reconcile]);
+
+  const refreshFiles = useCallback(() => {
+    const config = configRef.current;
+    if (!config) return;
+    fetchSnapshot(config)
+      .then((snapshot) => {
+        if (configRef.current === config) setFiles(snapshot.files);
+      })
+      .catch(() => {
+        // The next poll will pick the index up.
+      });
+  }, []);
 
   const disconnect = useCallback(() => {
     if (pushTimerRef.current) window.clearTimeout(pushTimerRef.current);
     pushTimerRef.current = null;
     configRef.current = null;
     writeSyncConfig(null);
+    setSyncCookie(null);
     setSyncConfig(null);
     setPartner(null);
+    setFiles({});
     setSyncStatus('off');
     setSyncedAt(null);
   }, []);
 
+  const player = syncConfig?.player ?? null;
   const hasSavedNote = useCallback(
-    (id: string) => Boolean(tracker.notes[id]?.trim()) || imageTopics.has(id),
-    [tracker.notes, imageTopics],
+    (id: string) => Boolean(tracker.notes[id]?.trim()) || imageTopics.has(id) || Boolean(player && files[id]?.[player]),
+    [tracker.notes, imageTopics, files, player],
   );
+  /** Who attached files to a case: left half Michael, right half Sam. */
+  const fileState = useCallback((id: string): TileState => {
+    const entry = files[id];
+    if (!entry) return 'none';
+    return tileState(Boolean(player && entry[player]), Boolean(player && entry[partnerOf(player)]), player);
+  }, [files, player]);
 
   const sync: TrackerSync = {
     config: syncConfig,
@@ -320,6 +352,8 @@ export function useTracker({ prepare, onLoaded }: Options = {}) {
     syncedAt,
     partner,
     partnerDone: new Set(partner?.state.completed ?? []),
+    files,
+    refreshFiles,
     connect,
     disconnect,
   };
@@ -336,6 +370,7 @@ export function useTracker({ prepare, onLoaded }: Options = {}) {
     toggleMock,
     saveNote,
     hasSavedNote,
+    fileState,
     sync,
   };
 }

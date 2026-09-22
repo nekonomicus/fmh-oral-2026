@@ -22,6 +22,26 @@ import {
   subscribeToTopicImageChanges,
   type TopicImageAttachment,
 } from './topic-images';
+import {
+  ATTACHMENT_ACCEPT,
+  attachmentKind,
+  formatBytes,
+  isPreviewableImage,
+  isSupportedAttachment,
+  prepareAttachment,
+} from './attachments';
+import {
+  PLAYERS,
+  deleteSharedFile,
+  listSharedFiles,
+  partnerOf,
+  playerLabel,
+  sharedFileUrl,
+  uploadSharedFile,
+  type SharedFile,
+  type SyncConfig,
+  type TileState,
+} from './sync';
 
 type TopicNoteButtonProps = {
   item: CaseItem;
@@ -29,6 +49,8 @@ type TopicNoteButtonProps = {
   onOpen: (item: CaseItem) => void;
   className?: string;
   disabled?: boolean;
+  /** Who attached shared files: left half Michael, right half Sam. */
+  fileState?: TileState;
 };
 
 type TopicNoteDialogProps = {
@@ -38,6 +60,9 @@ type TopicNoteDialogProps = {
   onClose: () => void;
   saveError?: boolean;
   savedLabel?: string;
+  /** Present when connected: attachments are shared between both players. */
+  sync?: SyncConfig | null;
+  onFilesChanged?: () => void;
 };
 
 type NoteLink = {
@@ -80,47 +105,63 @@ function ImageGlyph() {
   );
 }
 
-function imageErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message.toUpperCase() : 'IMAGE SAVE FAILED · TRY AGAIN';
+function ClipGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M16.5 7.5v8.25a4.5 4.5 0 0 1-9 0V6.25a3 3 0 0 1 6 0v9a1.5 1.5 0 0 1-3 0V8" />
+    </svg>
+  );
 }
 
-export function TopicNoteButton({ item, hasNote, onOpen, className = '', disabled = false }: TopicNoteButtonProps) {
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message.toUpperCase() : 'SAVE FAILED · TRY AGAIN';
+}
+
+export function TopicNoteButton({ item, hasNote, onOpen, className = '', disabled = false, fileState = 'none' }: TopicNoteButtonProps) {
   return (
     <button
       type="button"
       className={`topic-note-trigger ${hasNote ? 'has-note' : ''} ${className}`.trim()}
       onClick={() => onOpen(item)}
-      aria-label={`${hasNote ? 'Open saved note' : 'Add note'} for ${item.title}`}
+      aria-label={`${hasNote ? 'Open saved note' : 'Add note'} for ${item.title}${fileState !== 'none' ? '. Has attachments' : ''}`}
       aria-haspopup="dialog"
       disabled={disabled}
       title={hasNote ? 'Open saved note' : 'Add a note'}
     >
       <NoteGlyph />
       {hasNote && <span className="topic-note-dot" aria-hidden="true" />}
+      {fileState !== 'none' && <span className={`attach-mark ${fileState}`} aria-hidden="true" />}
     </button>
   );
 }
 
-export function TopicNoteDialog({ item, value, onChange, onClose, saveError = false, savedLabel = 'AUTO-SAVED ON THIS DEVICE' }: TopicNoteDialogProps) {
+export function TopicNoteDialog({
+  item, value, onChange, onClose, saveError = false, savedLabel = 'AUTO-SAVED ON THIS DEVICE', sync = null, onFilesChanged,
+}: TopicNoteDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const dragDepthRef = useRef(0);
   const uploadingRef = useRef(false);
   const [draft, setDraft] = useState(value);
   const [images, setImages] = useState<TopicImageAttachment[]>([]);
   const [imagesLoading, setImagesLoading] = useState(true);
-  const [addingImages, setAddingImages] = useState(0);
-  const [imageError, setImageError] = useState('');
+  const [shared, setShared] = useState<SharedFile[]>([]);
+  const [sharedLoading, setSharedLoading] = useState(Boolean(sync));
+  const [adding, setAdding] = useState(0);
+  const [fileError, setFileError] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const draftRef = useRef(value);
   const lastCommittedRef = useRef<string | null>(value);
   const onChangeRef = useRef(onChange);
+  const onFilesChangedRef = useRef(onFilesChanged);
   const links = useMemo(() => linksFrom(draft), [draft]);
   const imagePreviews = useMemo(() => images.map((image) => ({
     ...image,
     previewUrl: URL.createObjectURL(image.blob),
   })), [images]);
+  const sharedMode = Boolean(sync);
+  const partnerLabel = sync ? playerLabel(partnerOf(sync.player)) : '';
 
   const refreshImages = useCallback(async () => {
     const storedImages = await listTopicImages(item.id);
@@ -130,7 +171,8 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
 
   useEffect(() => {
     onChangeRef.current = onChange;
-  }, [onChange]);
+    onFilesChangedRef.current = onFilesChanged;
+  }, [onChange, onFilesChanged]);
 
   useEffect(() => () => {
     imagePreviews.forEach((image) => URL.revokeObjectURL(image.previewUrl));
@@ -143,7 +185,7 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
         if (!cancelled) setImages(storedImages);
       })
       .catch((error: unknown) => {
-        if (!cancelled) setImageError(imageErrorMessage(error));
+        if (!cancelled) setFileError(errorMessage(error));
       })
       .finally(() => {
         if (!cancelled) setImagesLoading(false);
@@ -153,9 +195,27 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
     };
   }, [item.id]);
 
+  useEffect(() => {
+    if (!sync) return;
+    let cancelled = false;
+    listSharedFiles(sync, item.id)
+      .then((files) => {
+        if (!cancelled) setShared(files);
+      })
+      .catch(() => {
+        if (!cancelled) setFileError('SHARED FILES COULD NOT BE LOADED');
+      })
+      .finally(() => {
+        if (!cancelled) setSharedLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [item.id, sync]);
+
   useEffect(() => subscribeToTopicImageChanges((topicId) => {
     if (topicId !== item.id && topicId !== '*') return;
-    void refreshImages().catch((error: unknown) => setImageError(imageErrorMessage(error)));
+    void refreshImages().catch((error: unknown) => setFileError(errorMessage(error)));
   }), [item.id, refreshImages]);
 
   const commit = useCallback(() => {
@@ -166,10 +226,10 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
   }, []);
 
   const closeAndSave = useCallback(() => {
-    if (addingImages > 0) return;
+    if (adding > 0) return;
     commit();
     onClose();
-  }, [addingImages, commit, onClose]);
+  }, [adding, commit, onClose]);
 
   const downloadNote = () => {
     const heading = `${item.title}\n${item.source} · ${item.miller}\n\n`;
@@ -183,27 +243,60 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
     URL.revokeObjectURL(url);
   };
 
-  const addFiles = useCallback(async (incoming: File[]) => {
-    if (imagesLoading || uploadingRef.current) {
-      setImageError('WAIT FOR THE CURRENT IMAGES TO FINISH');
+  const busyGuard = () => {
+    if (imagesLoading || sharedLoading || uploadingRef.current) {
+      setFileError('WAIT FOR THE CURRENT FILES TO FINISH');
+      return true;
+    }
+    return false;
+  };
+
+  const addSharedFiles = useCallback(async (incoming: File[]) => {
+    if (!sync) return;
+    const supported = incoming.filter(isSupportedAttachment);
+    if (supported.length === 0) {
+      setFileError('USE AN IMAGE, PDF, OR PPTX');
       return;
     }
+    uploadingRef.current = true;
+    setAdding(supported.length);
+    setFileError('');
+    const rejected: string[] = [];
+    try {
+      for (const file of supported) {
+        try {
+          const prepared = await prepareAttachment(file);
+          const uploaded = await uploadSharedFile(sync, item.id, prepared.name, prepared.type, prepared.blob);
+          setShared((current) => [...current, uploaded]);
+        } catch (error) {
+          rejected.push(errorMessage(error));
+        }
+        setAdding((current) => Math.max(0, current - 1));
+      }
+      if (rejected.length > 0) setFileError(rejected[0]);
+    } finally {
+      uploadingRef.current = false;
+      setAdding(0);
+      onFilesChangedRef.current?.();
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [item.id, sync]);
+
+  const addLocalImages = useCallback(async (incoming: File[]) => {
     const supported = incoming.filter(isSupportedImageFile);
     if (supported.length === 0) {
-      setImageError('USE A JPEG, PNG, OR WEBP IMAGE');
+      setFileError('USE A JPEG, PNG, OR WEBP IMAGE');
       return;
     }
-
     const availableSlots = Math.max(0, MAX_TOPIC_IMAGES - images.length);
     if (availableSlots === 0) {
-      setImageError(`MAXIMUM ${MAX_TOPIC_IMAGES} IMAGES PER TOPIC`);
+      setFileError(`MAXIMUM ${MAX_TOPIC_IMAGES} IMAGES PER TOPIC`);
       return;
     }
     const selected = supported.slice(0, availableSlots);
-    setImageError(supported.length > availableSlots ? `ONLY ${availableSlots} MORE IMAGES FIT THIS NOTE` : '');
+    setFileError(supported.length > availableSlots ? `ONLY ${availableSlots} MORE IMAGES FIT THIS NOTE` : '');
     uploadingRef.current = true;
-    setAddingImages(selected.length);
-
+    setAdding(selected.length);
     try {
       const prepared = [];
       const rejected: string[] = [];
@@ -211,54 +304,86 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
         try {
           prepared.push(await prepareTopicImage(file));
         } catch (error) {
-          rejected.push(imageErrorMessage(error));
+          rejected.push(errorMessage(error));
         }
       }
       if (prepared.length > 0) {
         await addTopicImages(item.id, prepared);
         await refreshImages();
       }
-      if (rejected.length > 0) setImageError(rejected[0]);
+      if (rejected.length > 0) setFileError(rejected[0]);
     } catch (error) {
-      setImageError(`${imageErrorMessage(error)} · TEXT AND PROGRESS ARE SAFE`);
+      setFileError(`${errorMessage(error)} · TEXT AND PROGRESS ARE SAFE`);
     } finally {
       uploadingRef.current = false;
-      setAddingImages(0);
-      if (imageInputRef.current) imageInputRef.current.value = '';
+      setAdding(0);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [images.length, imagesLoading, item.id, refreshImages]);
+  }, [images.length, item.id, refreshImages]);
 
-  const removeImage = async (image: TopicImageAttachment, index: number) => {
+  const addFiles = sharedMode ? addSharedFiles : addLocalImages;
+
+  const removeShared = async (file: SharedFile) => {
+    if (!sync || uploadingRef.current) return;
+    setFileError('');
+    try {
+      await deleteSharedFile(sync, file.id);
+      setShared((current) => current.filter((entry) => entry.id !== file.id));
+      onFilesChangedRef.current?.();
+    } catch (error) {
+      setFileError(`${errorMessage(error)} · ${file.name.toUpperCase()} WAS NOT REMOVED`);
+    }
+  };
+
+  const removeLocalImage = async (image: TopicImageAttachment, index: number) => {
     if (uploadingRef.current) return;
-    setImageError('');
+    setFileError('');
     try {
       await removeTopicImage(item.id, image.id);
       await refreshImages();
     } catch (error) {
-      setImageError(`${imageErrorMessage(error)} · IMAGE ${index + 1} WAS NOT REMOVED`);
+      setFileError(`${errorMessage(error)} · IMAGE ${index + 1} WAS NOT REMOVED`);
     }
   };
 
-  const handleImageInput = (event: ChangeEvent<HTMLInputElement>) => {
+  /** Moves a device-only image into the shared store. */
+  const shareLocalImage = async (image: TopicImageAttachment) => {
+    if (!sync || uploadingRef.current) return;
+    uploadingRef.current = true;
+    setAdding(1);
+    setFileError('');
+    try {
+      const uploaded = await uploadSharedFile(sync, item.id, image.name || 'image.jpg', image.mimeType, image.blob);
+      setShared((current) => [...current, uploaded]);
+      await removeTopicImage(item.id, image.id);
+      await refreshImages();
+      onFilesChangedRef.current?.();
+    } catch (error) {
+      setFileError(`${errorMessage(error)} · IMAGE STAYS ON THIS DEVICE`);
+    } finally {
+      uploadingRef.current = false;
+      setAdding(0);
+    }
+  };
+
+  const handleFileInput = (event: ChangeEvent<HTMLInputElement>) => {
     void addFiles(Array.from(event.target.files ?? []));
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const accept = sharedMode ? isSupportedAttachment : isSupportedImageFile;
     const files = Array.from(event.clipboardData.items)
       .filter((entry) => entry.kind === 'file')
       .map((entry) => entry.getAsFile())
-      .filter((file): file is File => file !== null && isSupportedImageFile(file));
+      .filter((file): file is File => file !== null && accept(file));
     if (files.length === 0) return;
     event.preventDefault();
-    if (imagesLoading || uploadingRef.current) {
-      setImageError('WAIT FOR THE CURRENT IMAGES TO FINISH');
-      return;
-    }
+    if (busyGuard()) return;
     void addFiles(files);
   };
 
   const handleDragEnter = (event: DragEvent<HTMLDivElement>) => {
-    if (imagesLoading || uploadingRef.current) return;
+    if (imagesLoading || sharedLoading || uploadingRef.current) return;
     const hasFiles = event.dataTransfer.types.includes('Files');
     const hasRemoteUrl = event.dataTransfer.types.includes('text/uri-list');
     if (!hasFiles && !hasRemoteUrl) return;
@@ -278,13 +403,11 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
     event.preventDefault();
     dragDepthRef.current = 0;
     setDragActive(false);
-    if (imagesLoading || uploadingRef.current) {
-      setImageError('WAIT FOR THE CURRENT IMAGES TO FINISH');
-      return;
-    }
-    const files = Array.from(event.dataTransfer.files).filter(isSupportedImageFile);
+    if (busyGuard()) return;
+    const accept = sharedMode ? isSupportedAttachment : isSupportedImageFile;
+    const files = Array.from(event.dataTransfer.files).filter(accept);
     if (files.length === 0) {
-      setImageError('DOWNLOAD REMOTE IMAGES FIRST, THEN DROP THE FILE');
+      setFileError(sharedMode ? 'USE AN IMAGE, PDF, OR PPTX · DOWNLOAD REMOTE FILES FIRST' : 'DOWNLOAD REMOTE IMAGES FIRST, THEN DROP THE FILE');
       return;
     }
     void addFiles(files);
@@ -357,7 +480,11 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
     if (!inside) closeAndSave();
   };
 
-  const imageCountLabel = `${images.length} ${images.length === 1 ? 'IMAGE' : 'IMAGES'}`;
+  const fileCount = sharedMode ? shared.length : images.length;
+  const countLabel = `${fileCount} ${fileCount === 1 ? 'FILE' : 'FILES'}`;
+  const loading = sharedMode ? sharedLoading : imagesLoading;
+  const addDisabled = loading || adding > 0 || (!sharedMode && images.length >= MAX_TOPIC_IMAGES);
+  const ownerTag = (player: SharedFile['player']) => PLAYERS.find((option) => option.id === player)?.initial ?? '?';
 
   return (
     <dialog
@@ -381,32 +508,32 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
             type="button"
             className="topic-note-close"
             onClick={closeAndSave}
-            aria-label={addingImages > 0 ? 'Wait for images to finish saving' : 'Close notes'}
-            disabled={addingImages > 0}
+            aria-label={adding > 0 ? 'Wait for files to finish saving' : 'Close notes'}
+            disabled={adding > 0}
           >
-            <span aria-hidden="true">{addingImages > 0 ? 'WAIT' : 'DONE'}</span>
+            <span aria-hidden="true">{adding > 0 ? 'WAIT' : 'DONE'}</span>
           </button>
         </header>
 
         <div className="topic-note-toolbar">
           <input
-            ref={imageInputRef}
+            ref={fileInputRef}
             className="file-input"
             type="file"
-            accept="image/jpeg,image/png,image/webp"
+            accept={sharedMode ? ATTACHMENT_ACCEPT : 'image/jpeg,image/png,image/webp'}
             multiple
-            onChange={handleImageInput}
+            onChange={handleFileInput}
           />
           <button
             type="button"
             className="topic-note-add-image"
-            onClick={() => imageInputRef.current?.click()}
-            disabled={imagesLoading || addingImages > 0 || images.length >= MAX_TOPIC_IMAGES}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={addDisabled}
           >
-            <ImageGlyph />
-            <span>{addingImages > 0 ? `ADDING ${addingImages}` : 'ADD IMAGE'}</span>
+            {sharedMode ? <ClipGlyph /> : <ImageGlyph />}
+            <span>{adding > 0 ? `ADDING ${adding}` : sharedMode ? 'ADD FILE' : 'ADD IMAGE'}</span>
           </button>
-          <span>PASTE OR DROP · FITS TO NOTE</span>
+          <span>{sharedMode ? `IMAGE · PDF · PPTX · SHARED WITH ${partnerLabel}` : 'PASTE OR DROP · ON THIS DEVICE'}</span>
         </div>
 
         <div
@@ -420,7 +547,7 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          {dragActive && <div className="topic-note-drop" aria-hidden="true">DROP IMAGES</div>}
+          {dragActive && <div className="topic-note-drop" aria-hidden="true">{sharedMode ? 'DROP FILES' : 'DROP IMAGES'}</div>}
           {/* The wrapper's ::after mirrors the text so the editor grows without a JS remeasure,
               which used to collapse the scroll pane and reset its scroll position on every keystroke. */}
           <div className="topic-note-grow" data-replica={draft}>
@@ -439,10 +566,54 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
             />
           </div>
 
+          {sharedMode && (sharedLoading ? (
+            <div className="topic-note-image-loading" aria-live="polite">LOADING SHARED FILES…</div>
+          ) : shared.length > 0 ? (
+            <div className="topic-note-images" aria-label={`Shared files for ${item.title}`}>
+              {shared.map((file, index) => {
+                const kind = attachmentKind(file.type);
+                const own = sync?.player === file.player;
+                const caption = `${String(index + 1).padStart(2, '0')} · ${file.name} · ${formatBytes(file.size)}`;
+                return (
+                  <figure key={file.id} className={`topic-note-image ${kind === 'image' && isPreviewableImage(file.type) ? '' : 'topic-note-file'}`}>
+                    {kind === 'image' && isPreviewableImage(file.type) ? (
+                      <a href={sharedFileUrl(file.id)} target="_blank" rel="noreferrer">
+                        {/* Served through our own API with a short-lived redirect; no image optimizer. */}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={sharedFileUrl(file.id)} alt={`${file.name} for ${item.title}`} loading="lazy" />
+                      </a>
+                    ) : (
+                      <a className="topic-note-file-card" href={sharedFileUrl(file.id)} target="_blank" rel="noreferrer">
+                        <span className="topic-note-file-kind">{kind === 'file' ? 'FILE' : kind.toUpperCase()}</span>
+                        <span className="topic-note-file-name">{file.name}</span>
+                        <span className="topic-note-file-meta">{formatBytes(file.size)} · OPEN ↗</span>
+                      </a>
+                    )}
+                    <span className={`topic-note-owner ${file.player}`} title={`Added by ${playerLabel(file.player)}`}>{ownerTag(file.player)}</span>
+                    {own && (
+                      <button
+                        type="button"
+                        className="topic-note-image-remove"
+                        onClick={() => void removeShared(file)}
+                        disabled={adding > 0}
+                        aria-label={`Remove ${file.name} from ${item.title}`}
+                        title="Remove file"
+                      >
+                        <span aria-hidden="true">×</span>
+                      </button>
+                    )}
+                    <figcaption>{caption}</figcaption>
+                  </figure>
+                );
+              })}
+            </div>
+          ) : null)}
+
           {imagesLoading ? (
             <div className="topic-note-image-loading" aria-live="polite">LOADING IMAGES…</div>
           ) : imagePreviews.length > 0 ? (
-            <div className="topic-note-images" aria-label={`Images for ${item.title}`}>
+            <div className="topic-note-images" aria-label={`Images on this device for ${item.title}`}>
+              {sharedMode && <div className="topic-note-local-label">ON THIS DEVICE ONLY · SHARE TO LET {partnerLabel} SEE THEM</div>}
               {imagePreviews.map((image, index) => (
                 <figure key={image.id} className="topic-note-image">
                   {/* Object URLs from local IndexedDB cannot use the hosted image optimizer. */}
@@ -453,11 +624,22 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
                     width={image.width}
                     height={image.height}
                   />
+                  {sharedMode && (
+                    <button
+                      type="button"
+                      className="topic-note-image-share"
+                      onClick={() => void shareLocalImage(image)}
+                      disabled={adding > 0}
+                      aria-label={`Share image ${index + 1} with ${partnerLabel}`}
+                    >
+                      SHARE
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="topic-note-image-remove"
-                    onClick={() => void removeImage(image, index)}
-                    disabled={addingImages > 0}
+                    onClick={() => void removeLocalImage(image, index)}
+                    disabled={adding > 0}
                     aria-label={`Remove image ${index + 1} from ${item.title}`}
                     title="Remove image"
                   >
@@ -471,20 +653,20 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
         </div>
 
         <div className="topic-note-foot">
-          <div className={`topic-note-save ${saveError || imageError ? 'error' : ''}`}>
-            <span role={saveError || imageError ? 'alert' : 'status'} aria-live="polite">
+          <div className={`topic-note-save ${saveError || fileError ? 'error' : ''}`}>
+            <span role={saveError || fileError ? 'alert' : 'status'} aria-live="polite">
               {saveError ? (
                 <button type="button" onClick={downloadNote}>TEXT SAVE FAILED · DOWNLOAD NOTE</button>
-              ) : imageError ? (
-                imageError
-              ) : addingImages > 0 ? (
-                `ADDING ${addingImages} ${addingImages === 1 ? 'IMAGE' : 'IMAGES'}…`
+              ) : fileError ? (
+                fileError
+              ) : adding > 0 ? (
+                `${sharedMode ? 'UPLOADING' : 'ADDING'} ${adding} ${adding === 1 ? 'FILE' : 'FILES'}…`
               ) : (
                 savedLabel
               )}
             </span>
-            <span aria-label={`${draft.length.toLocaleString()} characters and ${imageCountLabel.toLowerCase()}`}>
-              {draft.length.toLocaleString()} CHAR · {imageCountLabel}
+            <span aria-label={`${draft.length.toLocaleString()} characters and ${countLabel.toLowerCase()}`}>
+              {draft.length.toLocaleString()} CHAR · {countLabel}
             </span>
           </div>
           {links.length > 0 && (

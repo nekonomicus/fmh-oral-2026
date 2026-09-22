@@ -121,7 +121,7 @@ export default function Home() {
     setExpanded(phaseFor(date)?.id ?? 'spine');
   }, []);
   const {
-    tracker, trackerRef, ready, saveError, replace, toggleCase, toggleMock, saveNote, hasSavedNote, sync,
+    tracker, trackerRef, ready, saveError, replace, toggleCase, toggleMock, saveNote, hasSavedNote, fileState, sync,
   } = useTracker({ prepare: ensureToday, onLoaded });
 
   const completed = new Set(tracker.completed);
@@ -209,6 +209,7 @@ export default function Home() {
       done={completed.has(item.id)}
       onToggle={toggleCase}
       hasNote={hasSavedNote(item.id)}
+      fileState={fileState(item.id)}
       onOpenNote={setActiveNote}
       state={stateOf(item.id)}
       prominent={prominent}
@@ -285,6 +286,7 @@ export default function Home() {
                   done={isFinalReview ? tracker.mocks.includes(`review-${todayKey}-${item.id}`) : completed.has(item.id)}
                   onToggle={isFinalReview ? (id) => toggleMock(`review-${todayKey}-${id}`) : toggleCase}
                   hasNote={hasSavedNote(item.id)}
+                  fileState={fileState(item.id)}
                   onOpenNote={setActiveNote}
                   state={isFinalReview ? 'none' : stateOf(item.id)}
                   prominent
@@ -392,6 +394,8 @@ export default function Home() {
           onClose={() => setActiveNote(null)}
           saveError={saveError}
           savedLabel={statusLabel}
+          sync={sync.config}
+          onFilesChanged={sync.refreshFiles}
         />
       )}
       {syncOpen && <SyncDialog sync={sync} onClose={() => setSyncOpen(false)} />}
@@ -404,6 +408,7 @@ function CaseRow({
   done,
   onToggle,
   hasNote,
+  fileState = 'none',
   onOpenNote,
   state = 'none',
   prominent = false,
@@ -412,6 +417,7 @@ function CaseRow({
   done: boolean;
   onToggle: (id: string) => void;
   hasNote: boolean;
+  fileState?: TileState;
   onOpenNote: (item: CaseItem) => void;
   state?: TileState;
   prominent?: boolean;
@@ -433,7 +439,7 @@ function CaseRow({
         </span>
         {prominent && <span className="case-time">30 MIN</span>}
       </button>
-      <TopicNoteButton item={item} hasNote={hasNote} onOpen={onOpenNote} className="case-note-trigger" />
+      <TopicNoteButton item={item} hasNote={hasNote} fileState={fileState} onOpen={onOpenNote} className="case-note-trigger" />
     </div>
   );
 }

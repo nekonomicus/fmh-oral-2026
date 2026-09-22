@@ -84,7 +84,7 @@ export default function MatrixClient() {
   const [activeNote, setActiveNote] = useState<CaseItem | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const { tracker, ready, saveError, toggleCase, saveNote, hasSavedNote, sync } = useTracker();
+  const { tracker, ready, saveError, toggleCase, saveNote, hasSavedNote, fileState, sync } = useTracker();
 
   const completed = new Set(tracker.completed);
   const notes = tracker.notes;
@@ -257,6 +257,7 @@ export default function MatrixClient() {
                               <TopicNoteButton
                                 item={item}
                                 hasNote={hasSavedNote(item.id)}
+                                fileState={fileState(item.id)}
                                 onOpen={setActiveNote}
                                 className="matrix-note-trigger"
                                 disabled={!ready}
@@ -286,6 +287,8 @@ export default function MatrixClient() {
           onClose={() => setActiveNote(null)}
           saveError={saveError}
           savedLabel={syncStatusLabel(sync)}
+          sync={sync.config}
+          onFilesChanged={sync.refreshFiles}
         />
       )}
       {syncOpen && <SyncDialog sync={sync} onClose={() => setSyncOpen(false)} />}

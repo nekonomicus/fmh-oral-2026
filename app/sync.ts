@@ -20,7 +20,18 @@ export function partnerOf(id: PlayerId): PlayerId {
 }
 
 export type SyncDoc = { state: TrackerState; updatedAt: number };
-export type SyncSnapshot = Record<PlayerId, SyncDoc | null>;
+/** Per case: how many shared files each player attached. */
+export type FileIndex = Record<string, Partial<Record<PlayerId, number>>>;
+export type SyncSnapshot = Record<PlayerId, SyncDoc | null> & { files: FileIndex };
+export type SharedFile = {
+  id: number;
+  caseId: string;
+  player: PlayerId;
+  name: string;
+  size: number;
+  type: string;
+  createdAt: number;
+};
 export type SyncConfig = { player: PlayerId; code: string };
 export type SyncErrorKind = 'unauthorized' | 'unconfigured' | 'network' | 'conflict';
 
@@ -45,9 +56,93 @@ export function normalizeSyncDoc(value: unknown): SyncDoc | null {
   return { state: normalizeTrackerState(candidate.state), updatedAt: candidate.updatedAt };
 }
 
+export function normalizeFileIndex(value: unknown): FileIndex {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const index: FileIndex = {};
+  for (const [caseId, counts] of Object.entries(value as Record<string, unknown>)) {
+    if (!counts || typeof counts !== 'object') continue;
+    const entry: Partial<Record<PlayerId, number>> = {};
+    for (const player of PLAYERS) {
+      const count = (counts as Record<string, unknown>)[player.id];
+      if (typeof count === 'number' && count > 0) entry[player.id] = count;
+    }
+    if (Object.keys(entry).length > 0) index[caseId] = entry;
+  }
+  return index;
+}
+
 export function normalizeSnapshot(value: unknown): SyncSnapshot {
   const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  return { sam: normalizeSyncDoc(source.sam), michael: normalizeSyncDoc(source.michael) };
+  return { sam: normalizeSyncDoc(source.sam), michael: normalizeSyncDoc(source.michael), files: normalizeFileIndex(source.files) };
+}
+
+const SYNC_COOKIE = 'fmh_sync';
+
+/** Lets <img> and download links authenticate without a header. */
+export function setSyncCookie(code: string | null) {
+  try {
+    document.cookie = code
+      ? `${SYNC_COOKIE}=${encodeURIComponent(code)}; path=/; max-age=31536000; SameSite=Lax`
+      : `${SYNC_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+  } catch {
+    // Cookies blocked: file previews will not load, everything else works.
+  }
+}
+
+export function normalizeSharedFile(value: unknown): SharedFile | null {
+  if (!value || typeof value !== 'object') return null;
+  const file = value as Partial<SharedFile>;
+  if (typeof file.id !== 'number' || typeof file.caseId !== 'string' || !isPlayerId(file.player) || typeof file.name !== 'string') return null;
+  return {
+    id: file.id,
+    caseId: file.caseId,
+    player: file.player,
+    name: file.name,
+    size: typeof file.size === 'number' ? file.size : 0,
+    type: typeof file.type === 'string' ? file.type : 'application/octet-stream',
+    createdAt: typeof file.createdAt === 'number' ? file.createdAt : 0,
+  };
+}
+
+async function filesRequest(config: SyncConfig, query: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/files?${query}`, {
+      ...init,
+      cache: 'no-store',
+      headers: { authorization: `Bearer ${config.code}`, ...(init.headers ?? {}) },
+    });
+  } catch {
+    throw new SyncError('network');
+  }
+  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (response.status === 401) throw new SyncError('unauthorized');
+  if (response.status === 503) throw new SyncError('unconfigured');
+  if (response.status === 413) throw new Error('FILE IS TOO LARGE · 40 MB MAX');
+  if (response.status === 415) throw new Error('USE AN IMAGE, PDF, OR PPTX');
+  if (!response.ok || !body) throw new SyncError('network');
+  return body;
+}
+
+export async function listSharedFiles(config: SyncConfig, caseId: string): Promise<SharedFile[]> {
+  const body = await filesRequest(config, `case=${encodeURIComponent(caseId)}`);
+  return Array.isArray(body.files) ? body.files.map(normalizeSharedFile).filter((file): file is SharedFile => file !== null) : [];
+}
+
+export async function uploadSharedFile(config: SyncConfig, caseId: string, name: string, type: string, blob: Blob): Promise<SharedFile> {
+  const query = `case=${encodeURIComponent(caseId)}&player=${config.player}&name=${encodeURIComponent(name)}`;
+  const body = await filesRequest(config, query, { method: 'POST', headers: { 'content-type': type }, body: blob });
+  const file = normalizeSharedFile(body.file);
+  if (!file) throw new SyncError('network');
+  return file;
+}
+
+export async function deleteSharedFile(config: SyncConfig, id: number) {
+  await filesRequest(config, `id=${id}&player=${config.player}`, { method: 'DELETE' });
+}
+
+export function sharedFileUrl(id: number) {
+  return `/api/files?id=${id}`;
 }
 
 export function readSyncConfig(): SyncConfig | null {

@@ -34,6 +34,22 @@ The first time a device connects, anything already ticked on it is merged into
 the cloud copy. After that the newest save wins, and every device polls every
 30 seconds and whenever the tab regains focus.
 
+## Shared attachments
+
+When connected, the note drawer's **ADD FILE** uploads images (JPEG, PNG,
+WebP, GIF, HEIC), PDFs and PPTX files (40 MB each) so both players see them.
+Each file shows who added it; you can remove your own. The note icon on a
+case gets a small split bar: left half Michael, right half Sam, full when
+both attached something. Images saved on a device before this existed stay
+local until you press **SHARE** on them.
+
+Files are stored as release assets in a private GitHub repo:
+
+1. Create a private repo (e.g. `fmh-oral-files`) with a README.
+2. Use a `GITHUB_TOKEN` that also has the `repo` scope, or a fine-grained
+   token with Contents read/write on that repo.
+3. Set `ATTACHMENTS_REPO=owner/name` on the server.
+
 ## Search
 
 The search bar above the plan (and on the matrix) filters cases by title,
