@@ -12,17 +12,23 @@ and without any server setup. Sync switches on once the server has a store.
 
 ### One-time server setup (Render)
 
-1. Create a free Redis database at [upstash.com](https://upstash.com) and copy
-   its REST URL and REST token.
-2. In the Render service, add three environment variables:
+Progress is stored in a private Gist on your own GitHub account. Nothing else
+to sign up for.
+
+1. On GitHub go to Settings → Developer settings → Personal access tokens →
+   Tokens (classic) → Generate new token. Tick only **gist**. Copy the token.
+2. In the Render service, add two environment variables:
 
    | Name | Value |
    | --- | --- |
-   | `UPSTASH_REDIS_REST_URL` | REST URL from Upstash |
-   | `UPSTASH_REDIS_REST_TOKEN` | REST token from Upstash |
+   | `GITHUB_TOKEN` | the token from step 1 |
    | `SYNC_CODE` | any shared code both players will type |
 
 3. Redeploy. On each device: **CONNECT**, pick your name, enter the code.
+
+The Gist (`fmh-oral-26 sync`) is created automatically on first use, with one
+file per player. You can open it on gist.github.com any time to see or back up
+the raw data.
 
 The first time a device connects, anything already ticked on it is merged into
 the cloud copy. After that the newest save wins, and every device polls every

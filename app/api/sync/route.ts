@@ -1,22 +1,29 @@
 import { isPlayerId, normalizeSyncDoc, type PlayerId, type SyncDoc, type SyncSnapshot } from '../../sync';
 
 // Two-player progress store. Each player owns one document; the newer timestamp wins.
-// Backed by Upstash Redis over REST so it runs on any host. Configure three env vars:
-//   UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN, SYNC_CODE (shared code both players enter).
+// Data lives in a private Gist on the site owner's GitHub account, so no extra service is needed.
+// Configure two env vars on the host:
+//   GITHUB_TOKEN  a token with the "gist" scope
+//   SYNC_CODE     the shared code both players enter in the app
 
 export const dynamic = 'force-dynamic';
 
-const KEY_PREFIX = 'fmh-oral-26:';
+const API = process.env.GITHUB_API_URL ?? 'https://api.github.com';
+const GIST_DESCRIPTION = 'fmh-oral-26 sync · progress for Sam and Michael';
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const PLAYER_FILES: Record<PlayerId, string> = { sam: 'sam.json', michael: 'michael.json' };
 
-type ServerConfig = { url: string; token: string; code: string };
+type ServerConfig = { token: string; code: string };
+type GistFile = { content?: string; truncated?: boolean; raw_url?: string };
+type Gist = { id: string; description?: string; files: Record<string, GistFile | null> };
+
+let gistIdCache: string | null = null;
 
 function serverConfig(): ServerConfig | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const token = process.env.GITHUB_TOKEN;
   const code = process.env.SYNC_CODE;
-  if (!url || !token || !code) return null;
-  return { url: url.replace(/\/+$/, ''), token, code };
+  if (!token || !code) return null;
+  return { token, code };
 }
 
 function json(body: unknown, status = 200) {
@@ -41,32 +48,77 @@ function authorized(request: Request, config: ServerConfig) {
   return presented.length > 0 && constantTimeEqual(presented, config.code);
 }
 
-async function redis(config: ServerConfig, commands: string[][]): Promise<unknown[]> {
-  const response = await fetch(`${config.url}/pipeline`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' },
-    body: JSON.stringify(commands),
+async function github<T>(config: ServerConfig, path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API}${path}`, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${config.token}`,
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+      'user-agent': 'fmh-oral-2026',
+      ...(init.body ? { 'content-type': 'application/json' } : {}),
+    },
   });
-  if (!response.ok) throw new Error(`Redis responded ${response.status}`);
-  const results = await response.json() as { result?: unknown; error?: string }[];
-  return results.map((entry) => {
-    if (entry.error) throw new Error(entry.error);
-    return entry.result ?? null;
-  });
+  if (!response.ok) throw new Error(`GitHub responded ${response.status}`);
+  return response.json() as Promise<T>;
 }
 
-function parseDoc(raw: unknown): SyncDoc | null {
-  if (typeof raw !== 'string') return null;
+async function findGistId(config: ServerConfig): Promise<string> {
+  if (gistIdCache) return gistIdCache;
+  const gists = await github<Gist[]>(config, '/gists?per_page=100');
+  const existing = gists.find((gist) => gist.description === GIST_DESCRIPTION);
+  if (existing) {
+    gistIdCache = existing.id;
+    return existing.id;
+  }
+  const created = await github<Gist>(config, '/gists', {
+    method: 'POST',
+    body: JSON.stringify({
+      description: GIST_DESCRIPTION,
+      public: false,
+      files: Object.fromEntries(Object.values(PLAYER_FILES).map((name) => [name, { content: 'null' }])),
+    }),
+  });
+  gistIdCache = created.id;
+  return created.id;
+}
+
+async function fileDoc(config: ServerConfig, file: GistFile | null | undefined): Promise<SyncDoc | null> {
+  if (!file) return null;
+  let content = file.content ?? '';
+  if (file.truncated && file.raw_url) {
+    const response = await fetch(file.raw_url, { headers: { authorization: `Bearer ${config.token}` } });
+    if (!response.ok) throw new Error(`GitHub raw responded ${response.status}`);
+    content = await response.text();
+  }
   try {
-    return normalizeSyncDoc(JSON.parse(raw));
+    return normalizeSyncDoc(JSON.parse(content));
   } catch {
     return null;
   }
 }
 
 async function readSnapshot(config: ServerConfig): Promise<SyncSnapshot> {
-  const [sam, michael] = await redis(config, [['GET', `${KEY_PREFIX}sam`], ['GET', `${KEY_PREFIX}michael`]]);
-  return { sam: parseDoc(sam), michael: parseDoc(michael) };
+  const id = await findGistId(config);
+  let gist: Gist;
+  try {
+    gist = await github<Gist>(config, `/gists/${id}`);
+  } catch (error) {
+    gistIdCache = null; // The gist may have been deleted; look it up again next time.
+    throw error;
+  }
+  return {
+    sam: await fileDoc(config, gist.files[PLAYER_FILES.sam]),
+    michael: await fileDoc(config, gist.files[PLAYER_FILES.michael]),
+  };
+}
+
+async function writeDoc(config: ServerConfig, player: PlayerId, doc: SyncDoc) {
+  const id = await findGistId(config);
+  await github<Gist>(config, `/gists/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ files: { [PLAYER_FILES[player]]: { content: JSON.stringify(doc) } } }),
+  });
 }
 
 export async function GET(request: Request) {
@@ -103,7 +155,7 @@ export async function PUT(request: Request) {
     const snapshot = await readSnapshot(config);
     const current = snapshot[player];
     if (current && current.updatedAt > doc.updatedAt) return json({ error: 'conflict', snapshot }, 409);
-    await redis(config, [['SET', `${KEY_PREFIX}${player}`, JSON.stringify(doc)]]);
+    await writeDoc(config, player, doc);
     return json({ snapshot: { ...snapshot, [player]: doc } });
   } catch {
     return json({ error: 'store' }, 502);
