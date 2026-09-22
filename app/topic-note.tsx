@@ -37,6 +37,7 @@ type TopicNoteDialogProps = {
   onChange: (value: string) => void;
   onClose: () => void;
   saveError?: boolean;
+  savedLabel?: string;
 };
 
 type NoteLink = {
@@ -100,7 +101,7 @@ export function TopicNoteButton({ item, hasNote, onOpen, className = '', disable
   );
 }
 
-export function TopicNoteDialog({ item, value, onChange, onClose, saveError = false }: TopicNoteDialogProps) {
+export function TopicNoteDialog({ item, value, onChange, onClose, saveError = false, savedLabel = 'AUTO-SAVED ON THIS DEVICE' }: TopicNoteDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -479,7 +480,7 @@ export function TopicNoteDialog({ item, value, onChange, onClose, saveError = fa
               ) : addingImages > 0 ? (
                 `ADDING ${addingImages} ${addingImages === 1 ? 'IMAGE' : 'IMAGES'}…`
               ) : (
-                'AUTO-SAVED ON THIS DEVICE'
+                savedLabel
               )}
             </span>
             <span aria-label={`${draft.length.toLocaleString()} characters and ${imageCountLabel.toLowerCase()}`}>

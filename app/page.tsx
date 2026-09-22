@@ -1,23 +1,19 @@
 'use client';
 
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useRef, useState, type ChangeEvent } from 'react';
 import { phases, reserveGroups, sideChapters, type CaseItem, type StudyPhase } from './study-data';
 import { TopicNoteButton, TopicNoteDialog } from './topic-note';
 import {
   exportTopicImagesForBackup,
   isTopicImageBackup,
-  listTopicIdsWithImages,
   restoreTopicImagesFromBackup,
-  subscribeToTopicImageChanges,
 } from './topic-images';
-import {
-  EMPTY_TRACKER_STATE,
-  isTrackerBackup,
-  normalizeTrackerState,
-  readTrackerState,
-  writeTrackerState,
-  type TrackerState,
-} from './tracker-storage';
+import { isTrackerBackup, normalizeTrackerState, type TrackerState } from './tracker-storage';
+import { useTracker, syncStatusLabel } from './use-tracker';
+import { CaseSearch } from './case-search';
+import { matchesSearch, searchTerms } from './search';
+import { SyncButton, SyncDialog } from './sync-dialog';
+import { PLAYERS, partnerOf } from './sync';
 
 const EXAM_START = new Date(2026, 10, 20, 12);
 const EXAM_END = new Date(2026, 10, 21, 12);
@@ -27,6 +23,8 @@ const FINAL_END = new Date(2026, 10, 19, 12);
 const coreCases = phases.flatMap((phase) => phase.items);
 const reserveCases = reserveGroups.flatMap((group) => group.items);
 const allCases = [...coreCases, ...reserveCases];
+const searchableCases = [...allCases, ...sideChapters];
+const caseById = new Map(searchableCases.map((item) => [item.id, item]));
 const traumaCases = phases.find((phase) => phase.id === 'trauma')?.items ?? [];
 const paediatricCases = phases.find((phase) => phase.id === 'peds')?.items ?? [];
 const adultOrthoCount = coreCases.length - traumaCases.length - paediatricCases.length;
@@ -87,6 +85,20 @@ function currentAssignments(date: Date, completed: Set<string>) {
   return dueCases.slice(0, quota).map((item) => item.id);
 }
 
+function actualToday() {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  return date;
+}
+
+/** Makes sure today's assignment list exists. Returns the same object when nothing changes. */
+function ensureToday(state: TrackerState): TrackerState {
+  const date = actualToday();
+  const key = dateKey(date);
+  if (state.daily[key]) return state;
+  return { ...state, daily: { ...state.daily, [key]: currentAssignments(date, new Set(state.completed)) } };
+}
+
 export default function Home() {
   const [today, setToday] = useState(new Date(2026, 7, 25, 12));
   const todayKey = dateKey(today);
@@ -94,89 +106,22 @@ export default function Home() {
   const weekend = today.getDay() === 0 || today.getDay() === 6;
   const isFinalReview = today >= FINAL_START && today <= FINAL_END;
   const isExamWindow = today >= EXAM_START && today <= EXAM_END;
-  const [tracker, setTracker] = useState<TrackerState>(EMPTY_TRACKER_STATE);
-  const [ready, setReady] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(activePhase?.id ?? 'trauma');
   const [activeNote, setActiveNote] = useState<CaseItem | null>(null);
-  const [saveError, setSaveError] = useState(false);
-  const [imageTopics, setImageTopics] = useState<Set<string>>(new Set());
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
-  const trackerRef = useRef<TrackerState>(EMPTY_TRACKER_STATE);
-  const dirtyRef = useRef(false);
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const importRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const actualToday = new Date();
-    actualToday.setHours(12, 0, 0, 0);
-    const actualKey = dateKey(actualToday);
-    const actualPhase = phaseFor(actualToday);
-    let loaded = readTrackerState();
-    let initialSaveError = false;
-
-    if (!loaded.daily[actualKey]) {
-      const completed = new Set(loaded.completed);
-      loaded = {
-        ...loaded,
-        daily: { ...loaded.daily, [actualKey]: currentAssignments(actualToday, completed) },
-      };
-      initialSaveError = !writeTrackerState(loaded);
-    }
-
-    const initialSync = window.setTimeout(() => {
-      setToday(actualToday);
-      trackerRef.current = loaded;
-      dirtyRef.current = initialSaveError;
-      setTracker(loaded);
-      setSaveError(initialSaveError);
-      setExpanded(actualPhase?.id ?? 'spine');
-      setReady(true);
-    }, 0);
-
-    const syncFromStorage = () => {
-      if (dirtyRef.current) return;
-      const next = readTrackerState();
-      trackerRef.current = next;
-      setTracker(next);
-    };
-    window.addEventListener('storage', syncFromStorage);
-    return () => {
-      window.clearTimeout(initialSync);
-      window.removeEventListener('storage', syncFromStorage);
-    };
+  const onLoaded = useCallback(() => {
+    const date = actualToday();
+    setToday(date);
+    setExpanded(phaseFor(date)?.id ?? 'spine');
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const refreshImageTopics = () => {
-      void listTopicIdsWithImages()
-        .then((topicIds) => {
-          if (!cancelled) setImageTopics(topicIds);
-        })
-        .catch(() => {
-          // The note drawer reports image-storage errors without touching tracker data.
-        });
-    };
-    refreshImageTopics();
-    const unsubscribe = subscribeToTopicImageChanges(refreshImageTopics);
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, []);
-
-  const persist = (next: TrackerState) => {
-    trackerRef.current = next;
-    setTracker(next);
-    const saved = writeTrackerState(next);
-    dirtyRef.current = !saved;
-    setSaveError(!saved);
-  };
-
-  const mutate = (update: (current: TrackerState) => TrackerState) => {
-    const current = dirtyRef.current ? trackerRef.current : readTrackerState();
-    persist(update(current));
-  };
+  const {
+    tracker, trackerRef, ready, saveError, replace, toggleCase, toggleMock, saveNote, hasSavedNote, sync,
+  } = useTracker({ prepare: ensureToday, onLoaded });
 
   const completed = new Set(tracker.completed);
   const completeCore = coreCases.filter((item) => completed.has(item.id)).length;
@@ -184,37 +129,18 @@ export default function Home() {
   const overall = percent(completeCore, coreCases.length);
   const daysLeft = Math.max(0, calendarDaysBetween(today, EXAM_START));
   const todayItems = (tracker.daily[todayKey] ?? [])
-    .map((id) => allCases.find((item) => item.id === id))
+    .map((id) => caseById.get(id))
     .filter((item): item is CaseItem => Boolean(item));
 
-  const toggleCase = (id: string) => {
-    mutate((current) => {
-      const next = new Set(current.completed);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return { ...current, completed: [...next] };
-    });
-  };
+  const partnerId = sync.config ? partnerOf(sync.config.player) : null;
+  const partnerMeta = partnerId ? PLAYERS.find((player) => player.id === partnerId) : null;
+  const partnerCore = sync.partner ? coreCases.filter((item) => sync.partnerDone.has(item.id)).length : 0;
+  const partnerMark = (id: string) => (partnerMeta && sync.partnerDone.has(id) ? partnerMeta.initial : null);
 
-  const toggleMock = (id: string) => {
-    mutate((current) => {
-      const next = new Set(current.mocks);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return { ...current, mocks: [...next] };
-    });
-  };
-
-  const saveNote = (id: string, value: string) => {
-    mutate((current) => {
-      const notes = { ...current.notes };
-      if (value.length > 0) notes[id] = value;
-      else delete notes[id];
-      return { ...current, notes };
-    });
-  };
-
-  const hasSavedNote = (id: string) => Boolean(tracker.notes[id]?.trim()) || imageTopics.has(id);
+  const terms = searchTerms(query);
+  const searching = terms.length > 0;
+  const results = searching ? searchableCases.filter((item) => matchesSearch(item, tracker.notes[item.id], terms)) : [];
+  const statusLabel = syncStatusLabel(sync);
 
   const exportProgress = async () => {
     setBackupBusy(true);
@@ -246,8 +172,6 @@ export default function Home() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const previous = trackerRef.current;
-      let trackerWasWritten = false;
       try {
         const source = JSON.parse(String(reader.result));
         if (!isTrackerBackup(source)) throw new Error('Invalid tracker backup');
@@ -258,24 +182,12 @@ export default function Home() {
         const next = Object.prototype.hasOwnProperty.call(source, 'notes')
           ? restored
           : { ...restored, notes: trackerRef.current.notes };
-        if (!writeTrackerState(next)) throw new Error('Tracker storage is full');
-        trackerWasWritten = true;
         if (includesImages && isTopicImageBackup(noteImages)) {
           await restoreTopicImagesFromBackup(noteImages);
         }
-        trackerRef.current = next;
-        dirtyRef.current = false;
-        setTracker(next);
-        setSaveError(false);
+        replace(ensureToday(next));
         setBackupMessage('');
       } catch {
-        if (trackerWasWritten) {
-          const rolledBack = writeTrackerState(previous);
-          trackerRef.current = previous;
-          dirtyRef.current = !rolledBack;
-          setTracker(previous);
-          setSaveError(!rolledBack);
-        }
         setBackupMessage('RESTORE FAILED · YOUR CURRENT ENTRIES WERE KEPT');
       }
     };
@@ -283,12 +195,26 @@ export default function Home() {
     event.target.value = '';
   };
 
+  const renderRow = (item: CaseItem, prominent = false) => (
+    <CaseRow
+      key={item.id}
+      item={item}
+      done={completed.has(item.id)}
+      onToggle={toggleCase}
+      hasNote={hasSavedNote(item.id)}
+      onOpenNote={setActiveNote}
+      partnerMark={partnerMark(item.id)}
+      prominent={prominent}
+    />
+  );
+
   return (
     <main className="shell">
       <header className="topbar">
         <span className="wordmark">ORAL / 26</span>
         <div className="top-actions">
           <a href="/matrix">MATRIX</a>
+          <SyncButton sync={sync} onOpen={() => setSyncOpen(true)} />
           <button type="button" onClick={() => void exportProgress()} disabled={backupBusy}>
             {backupBusy ? 'BACKING UP…' : 'BACKUP'}
           </button>
@@ -311,136 +237,135 @@ export default function Home() {
             <span>{adultOrthoCount} ORTHO</span>
             <span>{paediatricCases.length} PEDS</span>
           </div>
-        </div>
-      </section>
-
-      <section className="today-section">
-        <div className="section-line">
-          <span>TODAY</span>
-          <span>{today.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' }).toUpperCase()} · {weekend ? '120–150 MIN' : '60–90 MIN'}</span>
-        </div>
-        <div className="today-list">
-          {ready && todayItems.length === 0 ? (
-            <div className="empty-state">{isExamWindow || today > EXAM_END ? 'EXAM WINDOW' : 'CORE COMPLETE'}</div>
-          ) : todayItems.map((item) => (
-            <CaseRow
-              key={item.id}
-              item={item}
-              done={isFinalReview ? tracker.mocks.includes(`review-${todayKey}-${item.id}`) : completed.has(item.id)}
-              onToggle={isFinalReview ? (id) => toggleMock(`review-${todayKey}-${id}`) : toggleCase}
-              hasNote={hasSavedNote(item.id)}
-              onOpenNote={setActiveNote}
-              prominent
-            />
-          ))}
-          {weekend && !isFinalReview && today < EXAM_START && (
-            <button
-              type="button"
-              className={`mock-row ${tracker.mocks.includes(`weekend-${todayKey}`) ? 'done' : ''}`}
-              onClick={() => toggleMock(`weekend-${todayKey}`)}
-            >
-              <span className="check" aria-hidden="true" />
-              <span>4-CASE MOCK</span>
-              <span className="case-meta">2 TRAUMA · 2 ORTHO</span>
-            </button>
+          {partnerMeta && (
+            <div className="partner-progress" aria-label={`${partnerMeta.label} progress ${percent(partnerCore, coreCases.length)} percent`}>
+              <div className="partner-line">
+                <span>{partnerMeta.label}</span>
+                <span>{sync.partner ? `${percent(partnerCore, coreCases.length)}% · ${partnerCore} / ${coreCases.length}` : 'NOT CONNECTED YET'}</span>
+              </div>
+              <div className="progress-track partner"><span style={{ width: `${percent(partnerCore, coreCases.length)}%` }} /></div>
+            </div>
           )}
         </div>
       </section>
 
-      <section className="plan-section">
-        <div className="section-line"><span>PLAN</span><span>{coreCases.length} CASES</span></div>
-        <div className="phase-list">
-          {phases.map((phase, index) => {
-            const done = phase.items.filter((item) => completed.has(item.id)).length;
-            const phasePercent = percent(done, phase.items.length);
-            const isOpen = expanded === phase.id;
-            return (
-              <article className={`phase ${activePhase?.id === phase.id ? 'active' : ''} ${isOpen ? 'open' : ''}`} key={phase.id}>
-                <button type="button" className="phase-head" onClick={() => setExpanded(isOpen ? null : phase.id)} aria-expanded={isOpen}>
-                  <span className="phase-index">{String(index + 1).padStart(2, '0')}</span>
-                  <span className="phase-name">{phase.name}</span>
-                  <span className="phase-dates">{phase.window}</span>
-                  <span className="phase-count">{done} / {phase.items.length}</span>
-                  <span className="phase-percent">{phasePercent}%</span>
-                  <span className="phase-toggle" aria-hidden="true">+</span>
-                </button>
-                {isOpen && (
-                  <div className="phase-body">
-                    <div className="chapter-strip"><span>{phase.miller}</span><span>{phase.pages}</span></div>
-                    <div className="case-list">
-                      {phase.items.map((item) => (
-                        <CaseRow
-                          key={item.id}
-                          item={item}
-                          done={completed.has(item.id)}
-                          onToggle={toggleCase}
-                          hasNote={hasSavedNote(item.id)}
-                          onOpenNote={setActiveNote}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </article>
-            );
-          })}
-        </div>
+      <CaseSearch value={query} onChange={setQuery} matches={searching ? results.length : null} />
 
-        <div className="final-block">
-          <div><span className="phase-index">{String(phases.length + 1).padStart(2, '0')}</span><strong>Final mix</strong><span className="phase-dates">17–19 NOV</span></div>
-          <div className="final-mocks">
-            {['17 NOV', '18 NOV', '19 NOV'].map((label, index) => {
-              const id = `final-${index + 1}`;
-              return (
-                <button key={id} type="button" className={tracker.mocks.includes(id) ? 'done' : ''} onClick={() => toggleMock(id)}>
-                  <span className="check" />
-                  <span>{label}</span>
-                  <span>2 + 2</span>
-                </button>
-              );
-            })}
+      {searching ? (
+        <section className="today-section">
+          <div className="section-line">
+            <span>SEARCH</span>
+            <span>{results.length} OF {searchableCases.length}</span>
           </div>
-        </div>
-      </section>
-
-      <section className="reserve-section">
-        <details>
-          <summary>
-            <span>RESERVE</span>
-            <span>{completeReserve} / {reserveCases.length + sideChapters.length}</span>
-          </summary>
-          <div className="reserve-body">
-            {reserveGroups.map((group) => (
-              <div className="reserve-group" key={group.name}>
-                <div className="chapter-strip"><span>{group.name}</span><span>{group.items.length}</span></div>
-                {group.items.map((item) => (
-                  <CaseRow
-                    key={item.id}
-                    item={item}
-                    done={completed.has(item.id)}
-                    onToggle={toggleCase}
-                    hasNote={hasSavedNote(item.id)}
-                    onOpenNote={setActiveNote}
-                  />
-                ))}
-              </div>
-            ))}
-            <div className="reserve-group">
-              <div className="chapter-strip"><span>MILLER OUTSIDE CORE</span><span>{sideChapters.length}</span></div>
-              {sideChapters.map((item) => (
+          <div className="today-list">
+            {results.length === 0 ? <div className="empty-state">NO MATCHES</div> : results.map((item) => renderRow(item))}
+          </div>
+        </section>
+      ) : (
+        <>
+          <section className="today-section">
+            <div className="section-line">
+              <span>TODAY</span>
+              <span>{today.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' }).toUpperCase()} · {weekend ? '120–150 MIN' : '60–90 MIN'}</span>
+            </div>
+            <div className="today-list">
+              {ready && todayItems.length === 0 ? (
+                <div className="empty-state">{isExamWindow || today > EXAM_END ? 'EXAM WINDOW' : 'CORE COMPLETE'}</div>
+              ) : todayItems.map((item) => (
                 <CaseRow
                   key={item.id}
                   item={item}
-                  done={completed.has(item.id)}
-                  onToggle={toggleCase}
+                  done={isFinalReview ? tracker.mocks.includes(`review-${todayKey}-${item.id}`) : completed.has(item.id)}
+                  onToggle={isFinalReview ? (id) => toggleMock(`review-${todayKey}-${id}`) : toggleCase}
                   hasNote={hasSavedNote(item.id)}
                   onOpenNote={setActiveNote}
+                  partnerMark={partnerMark(item.id)}
+                  prominent
                 />
               ))}
+              {weekend && !isFinalReview && today < EXAM_START && (
+                <button
+                  type="button"
+                  className={`mock-row ${tracker.mocks.includes(`weekend-${todayKey}`) ? 'done' : ''}`}
+                  onClick={() => toggleMock(`weekend-${todayKey}`)}
+                >
+                  <span className="check" aria-hidden="true" />
+                  <span>4-CASE MOCK</span>
+                  <span className="case-meta">2 TRAUMA · 2 ORTHO</span>
+                </button>
+              )}
             </div>
-          </div>
-        </details>
-      </section>
+          </section>
+
+          <section className="plan-section">
+            <div className="section-line"><span>PLAN</span><span>{coreCases.length} CASES</span></div>
+            <div className="phase-list">
+              {phases.map((phase, index) => {
+                const done = phase.items.filter((item) => completed.has(item.id)).length;
+                const phasePercent = percent(done, phase.items.length);
+                const isOpen = expanded === phase.id;
+                return (
+                  <article className={`phase ${activePhase?.id === phase.id ? 'active' : ''} ${isOpen ? 'open' : ''}`} key={phase.id}>
+                    <button type="button" className="phase-head" onClick={() => setExpanded(isOpen ? null : phase.id)} aria-expanded={isOpen}>
+                      <span className="phase-index">{String(index + 1).padStart(2, '0')}</span>
+                      <span className="phase-name">{phase.name}</span>
+                      <span className="phase-dates">{phase.window}</span>
+                      <span className="phase-count">{done} / {phase.items.length}</span>
+                      <span className="phase-percent">{phasePercent}%</span>
+                      <span className="phase-toggle" aria-hidden="true">+</span>
+                    </button>
+                    {isOpen && (
+                      <div className="phase-body">
+                        <div className="chapter-strip"><span>{phase.miller}</span><span>{phase.pages}</span></div>
+                        <div className="case-list">
+                          {phase.items.map((item) => renderRow(item))}
+                        </div>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+
+            <div className="final-block">
+              <div><span className="phase-index">{String(phases.length + 1).padStart(2, '0')}</span><strong>Final mix</strong><span className="phase-dates">17–19 NOV</span></div>
+              <div className="final-mocks">
+                {['17 NOV', '18 NOV', '19 NOV'].map((label, index) => {
+                  const id = `final-${index + 1}`;
+                  return (
+                    <button key={id} type="button" className={tracker.mocks.includes(id) ? 'done' : ''} onClick={() => toggleMock(id)}>
+                      <span className="check" />
+                      <span>{label}</span>
+                      <span>2 + 2</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          <section className="reserve-section">
+            <details>
+              <summary>
+                <span>RESERVE</span>
+                <span>{completeReserve} / {reserveCases.length + sideChapters.length}</span>
+              </summary>
+              <div className="reserve-body">
+                {reserveGroups.map((group) => (
+                  <div className="reserve-group" key={group.name}>
+                    <div className="chapter-strip"><span>{group.name}</span><span>{group.items.length}</span></div>
+                    {group.items.map((item) => renderRow(item))}
+                  </div>
+                ))}
+                <div className="reserve-group">
+                  <div className="chapter-strip"><span>MILLER OUTSIDE CORE</span><span>{sideChapters.length}</span></div>
+                  {sideChapters.map((item) => renderRow(item))}
+                </div>
+              </div>
+            </details>
+          </section>
+        </>
+      )}
 
       <footer>
         <span className={saveError || backupMessage ? 'save-warning' : ''}>
@@ -448,7 +373,7 @@ export default function Home() {
             ? 'SAVE FAILED · OPEN THE NOTE TO DOWNLOAD A COPY'
             : backupMessage
               ? backupMessage
-              : 'AUTO-SAVED ON THIS DEVICE'}
+              : statusLabel}
         </span>
         <span>HEFTI 3E · MILLER 9E · FMH 2+2</span>
       </footer>
@@ -459,8 +384,10 @@ export default function Home() {
           onChange={(value) => saveNote(activeNote.id, value)}
           onClose={() => setActiveNote(null)}
           saveError={saveError}
+          savedLabel={statusLabel}
         />
       )}
+      {syncOpen && <SyncDialog sync={sync} onClose={() => setSyncOpen(false)} />}
     </main>
   );
 }
@@ -471,6 +398,7 @@ function CaseRow({
   onToggle,
   hasNote,
   onOpenNote,
+  partnerMark = null,
   prominent = false,
 }: {
   item: CaseItem;
@@ -478,6 +406,7 @@ function CaseRow({
   onToggle: (id: string) => void;
   hasNote: boolean;
   onOpenNote: (item: CaseItem) => void;
+  partnerMark?: string | null;
   prominent?: boolean;
 }) {
   return (
@@ -487,14 +416,19 @@ function CaseRow({
         className="case-row-toggle"
         onClick={() => onToggle(item.id)}
         aria-pressed={done}
-        aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}`}
+        aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}${partnerMark ? '. Partner completed' : ''}`}
       >
         <span className="check" aria-hidden="true" />
         <span className="case-copy">
           <span className="case-title">{item.title}</span>
           <span className="case-meta">{item.source} · {item.miller}</span>
         </span>
-        {prominent && <span className="case-time">30 MIN</span>}
+        {(partnerMark || prominent) && (
+          <span className="case-side">
+            {partnerMark && <span className="partner-mark" title="Done by partner">{partnerMark}</span>}
+            {prominent && <span className="case-time">30 MIN</span>}
+          </span>
+        )}
       </button>
       <TopicNoteButton item={item} hasNote={hasNote} onOpen={onOpenNote} className="case-note-trigger" />
     </div>

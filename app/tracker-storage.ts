@@ -1,4 +1,5 @@
 export const STORAGE_KEY = 'fmh-oral-26-v1';
+const UPDATED_KEY = 'fmh-oral-26-v1-updated';
 
 export type TrackerState = {
   completed: string[];
@@ -34,6 +35,31 @@ export function normalizeTrackerState(value: unknown): TrackerState {
   };
 }
 
+export function hasTrackerContent(state: TrackerState) {
+  return state.completed.length > 0 || state.mocks.length > 0 || Object.keys(state.notes).length > 0;
+}
+
+/** Union of two states. Used once when a device first joins a player that already has cloud data. */
+export function mergeTrackerStates(base: TrackerState, extra: TrackerState): TrackerState {
+  const daily = { ...base.daily };
+  for (const [day, items] of Object.entries(extra.daily)) {
+    daily[day] = [...new Set([...(daily[day] ?? []), ...items])];
+  }
+  const notes = { ...base.notes };
+  for (const [id, text] of Object.entries(extra.notes)) {
+    if (!text.trim()) continue;
+    const existing = notes[id]?.trim();
+    if (!existing) notes[id] = text;
+    else if (existing !== text.trim() && !existing.includes(text.trim())) notes[id] = `${notes[id].trimEnd()}\n\n${text}`;
+  }
+  return {
+    completed: [...new Set([...base.completed, ...extra.completed])],
+    daily,
+    mocks: [...new Set([...base.mocks, ...extra.mocks])],
+    notes,
+  };
+}
+
 export function isTrackerBackup(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
@@ -56,9 +82,20 @@ export function readTrackerState(): TrackerState {
   }
 }
 
-export function writeTrackerState(next: TrackerState): boolean {
+/** Millisecond timestamp of the last local edit; 0 when unknown (pre-sync data). */
+export function readTrackerUpdatedAt(): number {
+  try {
+    const value = Number(localStorage.getItem(UPDATED_KEY));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function writeTrackerState(next: TrackerState, updatedAt?: number): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    if (updatedAt !== undefined) localStorage.setItem(UPDATED_KEY, String(updatedAt));
     return true;
   } catch {
     return false;

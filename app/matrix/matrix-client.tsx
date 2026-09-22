@@ -1,15 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { phases, reserveGroups, type CaseItem } from '../study-data';
 import { TopicNoteButton, TopicNoteDialog } from '../topic-note';
-import { listTopicIdsWithImages, subscribeToTopicImageChanges } from '../topic-images';
-import {
-  EMPTY_TRACKER_STATE,
-  readTrackerState,
-  writeTrackerState,
-  type TrackerState,
-} from '../tracker-storage';
+import { useTracker, syncStatusLabel } from '../use-tracker';
+import { CaseSearch } from '../case-search';
+import { matchesSearch, searchTerms } from '../search';
+import { SyncButton, SyncDialog } from '../sync-dialog';
+import { PLAYERS, partnerOf } from '../sync';
 
 const rawCases = [...phases.flatMap((phase) => phase.items), ...reserveGroups.flatMap((group) => group.items)];
 const phaseItems = (id: string) => phases.find((phase) => phase.id === id)?.items ?? [];
@@ -82,88 +80,34 @@ function clusterSpan(count: number) {
 }
 
 export default function MatrixClient() {
-  const [tracker, setTracker] = useState<TrackerState>(EMPTY_TRACKER_STATE);
   const [activeNote, setActiveNote] = useState<CaseItem | null>(null);
-  const [ready, setReady] = useState(false);
-  const [saveError, setSaveError] = useState(false);
-  const [imageTopics, setImageTopics] = useState<Set<string>>(new Set());
-  const trackerRef = useRef<TrackerState>(EMPTY_TRACKER_STATE);
-  const dirtyRef = useRef(false);
-
-  useEffect(() => {
-    const sync = () => {
-      if (dirtyRef.current) return;
-      const next = readTrackerState();
-      trackerRef.current = next;
-      setTracker(next);
-    };
-    const initialSync = window.setTimeout(() => {
-      sync();
-      setReady(true);
-    }, 0);
-    window.addEventListener('storage', sync);
-    return () => {
-      window.clearTimeout(initialSync);
-      window.removeEventListener('storage', sync);
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const refreshImageTopics = () => {
-      void listTopicIdsWithImages()
-        .then((topicIds) => {
-          if (!cancelled) setImageTopics(topicIds);
-        })
-        .catch(() => {
-          // The note drawer reports image-storage errors without touching progress.
-        });
-    };
-    refreshImageTopics();
-    const unsubscribe = subscribeToTopicImageChanges(refreshImageTopics);
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, []);
-
-  const persist = (next: TrackerState) => {
-    trackerRef.current = next;
-    setTracker(next);
-    const saved = writeTrackerState(next);
-    dirtyRef.current = !saved;
-    setSaveError(!saved);
-  };
-
-  const mutate = (update: (current: TrackerState) => TrackerState) => {
-    const current = dirtyRef.current ? trackerRef.current : readTrackerState();
-    persist(update(current));
-  };
-
-  const toggleCase = (id: string) => {
-    if (!ready) return;
-    mutate((current) => {
-      const completed = new Set(current.completed);
-      if (completed.has(id)) completed.delete(id);
-      else completed.add(id);
-      return { ...current, completed: [...completed] };
-    });
-  };
-
-  const saveNote = (id: string, value: string) => {
-    mutate((current) => {
-      const notes = { ...current.notes };
-      if (value.length > 0) notes[id] = value;
-      else delete notes[id];
-      return { ...current, notes };
-    });
-  };
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const { tracker, ready, saveError, toggleCase, saveNote, hasSavedNote, sync } = useTracker();
 
   const completed = new Set(tracker.completed);
   const notes = tracker.notes;
-  const hasSavedNote = (id: string) => Boolean(notes[id]?.trim()) || imageTopics.has(id);
   const doneCount = rawCases.filter((item) => completed.has(item.id)).length;
   const progress = Math.round((doneCount / rawCases.length) * 100);
+
+  const partnerId = sync.config ? partnerOf(sync.config.player) : null;
+  const partnerMeta = partnerId ? PLAYERS.find((player) => player.id === partnerId) : null;
+  const partnerCount = sync.partner ? rawCases.filter((item) => sync.partnerDone.has(item.id)).length : 0;
+  const partnerPercent = Math.round((partnerCount / rawCases.length) * 100);
+
+  const terms = searchTerms(query);
+  const searching = terms.length > 0;
+  const visible = (item: CaseItem) => matchesSearch(item, notes[item.id], terms);
+  const visibleSectors = sectors
+    .map((sector) => ({
+      ...sector,
+      clusters: sector.clusters
+        .map((cluster) => ({ ...cluster, items: searching ? cluster.items.filter(visible) : cluster.items }))
+        .filter((cluster) => cluster.items.length > 0),
+    }))
+    .filter((sector) => sector.clusters.length > 0);
+  const matchCount = searching ? visibleSectors.reduce((sum, sector) => sum + sector.clusters.reduce((inner, cluster) => inner + cluster.items.length, 0), 0) : null;
+  const statusLabel = syncStatusLabel(sync, 'CLICK TO UPDATE');
 
   return (
     <main className="shell matrix-page" aria-busy={!ready}>
@@ -175,6 +119,7 @@ export default function MatrixClient() {
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a href="/">DAILY</a>
           <span className="current-view" aria-current="page">MATRIX</span>
+          <SyncButton sync={sync} onOpen={() => setSyncOpen(true)} />
           <span className="exam-date">20/21 NOV</span>
         </div>
       </header>
@@ -187,6 +132,15 @@ export default function MatrixClient() {
         <div className="overall" aria-label={`Case completion ${progress} percent`}>
           <div className="overall-value" aria-live="polite"><strong>{progress}%</strong><span>{doneCount} / {rawCases.length}</span></div>
           <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
+          {partnerMeta && (
+            <div className="partner-progress" aria-label={`${partnerMeta.label} completion ${partnerPercent} percent`}>
+              <div className="partner-line">
+                <span>{partnerMeta.label}</span>
+                <span>{sync.partner ? `${partnerPercent}% · ${partnerCount} / ${rawCases.length}` : 'NOT CONNECTED YET'}</span>
+              </div>
+              <div className="progress-track partner"><span style={{ width: `${partnerPercent}%` }} /></div>
+            </div>
+          )}
         </div>
       </section>
 
@@ -194,9 +148,15 @@ export default function MatrixClient() {
         {sectors.map((sector) => <a key={sector.id} href={`#${sector.id}`}>{sector.label}</a>)}
       </nav>
 
+      <CaseSearch value={query} onChange={setQuery} matches={matchCount} />
+
       <section className="matrix-content">
-        <div className="section-line"><span>RAW CASES</span><span>{rawCases.length} TOTAL</span></div>
-        {sectors.map((sector) => {
+        <div className="section-line">
+          <span>{searching ? 'SEARCH' : 'RAW CASES'}</span>
+          <span>{searching ? `${matchCount} OF ${rawCases.length}` : `${rawCases.length} TOTAL`}</span>
+        </div>
+        {searching && visibleSectors.length === 0 && <div className="empty-state">NO MATCHES</div>}
+        {visibleSectors.map((sector) => {
           const sectorItems = sector.clusters.flatMap((cluster) => cluster.items);
           const sectorDone = sectorItems.filter((item) => completed.has(item.id)).length;
           const sectorPercent = Math.round((sectorDone / sectorItems.length) * 100);
@@ -222,6 +182,7 @@ export default function MatrixClient() {
                       <div className="matrix-grid">
                         {cluster.items.map((item) => {
                           const done = completed.has(item.id);
+                          const partnerDone = Boolean(partnerMeta && sync.partnerDone.has(item.id));
                           return (
                             <div
                               className={`matrix-tile-wrap ${item.title.length > 70 ? 'long' : ''} ${done ? 'done' : ''}`}
@@ -233,11 +194,12 @@ export default function MatrixClient() {
                                 onClick={() => toggleCase(item.id)}
                                 disabled={!ready}
                                 aria-pressed={done}
-                                aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}`}
+                                aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}${partnerDone ? '. Partner completed' : ''}`}
                               >
                                 <span className="matrix-case-title">{item.title}</span>
                                 <span className="matrix-case-meta">{item.source} · {item.miller}</span>
                                 <span className="matrix-status" aria-hidden="true">{done ? '✓' : ''}</span>
+                                {partnerDone && partnerMeta && <span className="matrix-partner" aria-hidden="true">{partnerMeta.initial}</span>}
                               </button>
                               <TopicNoteButton
                                 item={item}
@@ -260,7 +222,7 @@ export default function MatrixClient() {
       </section>
 
       <footer>
-        <span className={saveError ? 'save-warning' : ''}>{saveError ? 'SAVE FAILED · OPEN THE NOTE TO DOWNLOAD A COPY' : 'CLICK TO UPDATE'}</span>
+        <span className={saveError ? 'save-warning' : ''}>{saveError ? 'SAVE FAILED · OPEN THE NOTE TO DOWNLOAD A COPY' : statusLabel}</span>
         <span>{rawCases.length} HISTORICAL CASES · LIVE PROGRESS</span>
       </footer>
       {activeNote && (
@@ -270,8 +232,10 @@ export default function MatrixClient() {
           onChange={(value) => saveNote(activeNote.id, value)}
           onClose={() => setActiveNote(null)}
           saveError={saveError}
+          savedLabel={syncStatusLabel(sync)}
         />
       )}
+      {syncOpen && <SyncDialog sync={sync} onClose={() => setSyncOpen(false)} />}
     </main>
   );
 }
