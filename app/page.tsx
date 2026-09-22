@@ -12,8 +12,9 @@ import { isTrackerBackup, normalizeTrackerState, type TrackerState } from './tra
 import { useTracker, syncStatusLabel } from './use-tracker';
 import { CaseSearch } from './case-search';
 import { matchesSearch, searchTerms } from './search';
+import { useSmartSearch } from './use-smart-search';
 import { SyncButton, SyncDialog } from './sync-dialog';
-import { PLAYERS, partnerOf } from './sync';
+import { PLAYERS, partnerOf, tileState, type TileState } from './sync';
 
 const EXAM_START = new Date(2026, 10, 20, 12);
 const EXAM_END = new Date(2026, 10, 21, 12);
@@ -135,11 +136,17 @@ export default function Home() {
   const partnerId = sync.config ? partnerOf(sync.config.player) : null;
   const partnerMeta = partnerId ? PLAYERS.find((player) => player.id === partnerId) : null;
   const partnerCore = sync.partner ? coreCases.filter((item) => sync.partnerDone.has(item.id)).length : 0;
-  const partnerMark = (id: string) => (partnerMeta && sync.partnerDone.has(id) ? partnerMeta.initial : null);
+  const player = sync.config?.player ?? null;
+  const stateOf = (id: string) => tileState(completed.has(id), sync.partnerDone.has(id), player);
 
   const terms = searchTerms(query);
   const searching = terms.length > 0;
-  const results = searching ? searchableCases.filter((item) => matchesSearch(item, tracker.notes[item.id], terms)) : [];
+  const smart = useSmartSearch(query, sync.config?.code ?? null);
+  const localResults = searching ? searchableCases.filter((item) => matchesSearch(item, tracker.notes[item.id], terms)) : [];
+  const localIds = new Set(localResults.map((item) => item.id));
+  const results = searching
+    ? [...localResults, ...smart.ids.filter((id) => !localIds.has(id)).map((id) => caseById.get(id)).filter((item): item is CaseItem => Boolean(item))]
+    : [];
   const statusLabel = syncStatusLabel(sync);
 
   const exportProgress = async () => {
@@ -203,7 +210,7 @@ export default function Home() {
       onToggle={toggleCase}
       hasNote={hasSavedNote(item.id)}
       onOpenNote={setActiveNote}
-      partnerMark={partnerMark(item.id)}
+      state={stateOf(item.id)}
       prominent={prominent}
     />
   );
@@ -249,7 +256,7 @@ export default function Home() {
         </div>
       </section>
 
-      <CaseSearch value={query} onChange={setQuery} matches={searching ? results.length : null} />
+      <CaseSearch value={query} onChange={setQuery} matches={searching ? results.length : null} thinking={smart.busy} />
 
       {searching ? (
         <section className="today-section">
@@ -279,7 +286,7 @@ export default function Home() {
                   onToggle={isFinalReview ? (id) => toggleMock(`review-${todayKey}-${id}`) : toggleCase}
                   hasNote={hasSavedNote(item.id)}
                   onOpenNote={setActiveNote}
-                  partnerMark={partnerMark(item.id)}
+                  state={isFinalReview ? 'none' : stateOf(item.id)}
                   prominent
                 />
               ))}
@@ -398,7 +405,7 @@ function CaseRow({
   onToggle,
   hasNote,
   onOpenNote,
-  partnerMark = null,
+  state = 'none',
   prominent = false,
 }: {
   item: CaseItem;
@@ -406,9 +413,10 @@ function CaseRow({
   onToggle: (id: string) => void;
   hasNote: boolean;
   onOpenNote: (item: CaseItem) => void;
-  partnerMark?: string | null;
+  state?: TileState;
   prominent?: boolean;
 }) {
+  const partnerDone = state === 'done' ? done : state !== 'none' && !done;
   return (
     <div className={`case-row ${prominent ? 'prominent' : ''} ${done ? 'done' : ''}`}>
       <button
@@ -416,19 +424,14 @@ function CaseRow({
         className="case-row-toggle"
         onClick={() => onToggle(item.id)}
         aria-pressed={done}
-        aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}${partnerMark ? '. Partner completed' : ''}`}
+        aria-label={`${item.title}. ${done ? 'Completed' : 'Not completed'}${partnerDone ? '. Partner completed' : ''}`}
       >
-        <span className="check" aria-hidden="true" />
+        <span className={`check ${state.startsWith('half') ? state : ''}`} aria-hidden="true" />
         <span className="case-copy">
           <span className="case-title">{item.title}</span>
           <span className="case-meta">{item.source} · {item.miller}</span>
         </span>
-        {(partnerMark || prominent) && (
-          <span className="case-side">
-            {partnerMark && <span className="partner-mark" title="Done by partner">{partnerMark}</span>}
-            {prominent && <span className="case-time">30 MIN</span>}
-          </span>
-        )}
+        {prominent && <span className="case-time">30 MIN</span>}
       </button>
       <TopicNoteButton item={item} hasNote={hasNote} onOpen={onOpenNote} className="case-note-trigger" />
     </div>

@@ -38,3 +38,8 @@ the cloud copy. After that the newest save wins, and every device polls every
 
 The search bar above the plan (and on the matrix) filters cases by title,
 source, Miller chapter and note text. Press `/` to focus it, `Esc` to clear.
+
+When connected, a Gemini pass runs a moment after you stop typing and adds
+cases that match by meaning (synonyms, classifications, patient stories,
+German or English). Set `GEMINI_API_KEY` on the server; `GEMINI_MODEL`
+optionally overrides the default `gemini-3.5-flash-lite`.

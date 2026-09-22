@@ -99,3 +99,14 @@ export function fetchSnapshot(config: SyncConfig) {
 export function pushDoc(config: SyncConfig, doc: SyncDoc) {
   return request(config, { method: 'PUT', body: JSON.stringify({ player: config.player, doc }) });
 }
+
+/** Visual state of a case: left half is Michael, right half is Sam, full when both are done. */
+export type TileState = 'none' | 'done' | 'half-sam' | 'half-michael';
+
+export function tileState(mine: boolean, partner: boolean, player: PlayerId | null): TileState {
+  if (!player) return mine ? 'done' : 'none';
+  if (mine && partner) return 'done';
+  if (mine) return `half-${player}`;
+  if (partner) return `half-${partnerOf(player)}`;
+  return 'none';
+}

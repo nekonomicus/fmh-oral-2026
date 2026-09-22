@@ -6,8 +6,9 @@ import { TopicNoteButton, TopicNoteDialog } from '../topic-note';
 import { useTracker, syncStatusLabel } from '../use-tracker';
 import { CaseSearch } from '../case-search';
 import { matchesSearch, searchTerms } from '../search';
+import { useSmartSearch } from '../use-smart-search';
 import { SyncButton, SyncDialog } from '../sync-dialog';
-import { PLAYERS, partnerOf } from '../sync';
+import { PLAYERS, partnerOf, tileState } from '../sync';
 
 const rawCases = [...phases.flatMap((phase) => phase.items), ...reserveGroups.flatMap((group) => group.items)];
 const phaseItems = (id: string) => phases.find((phase) => phase.id === id)?.items ?? [];
@@ -94,10 +95,22 @@ export default function MatrixClient() {
   const partnerMeta = partnerId ? PLAYERS.find((player) => player.id === partnerId) : null;
   const partnerCount = sync.partner ? rawCases.filter((item) => sync.partnerDone.has(item.id)).length : 0;
   const partnerPercent = Math.round((partnerCount / rawCases.length) * 100);
+  const player = sync.config?.player ?? null;
+  const stateOf = (item: CaseItem) => tileState(completed.has(item.id), sync.partnerDone.has(item.id), player);
+  const bothCount = rawCases.filter((item) => stateOf(item) === 'done').length;
+  const [peek, setPeek] = useState<CaseItem | null>(null);
+  const jumpTo = (item: CaseItem) => {
+    const tile = document.getElementById(`case-${item.id}`);
+    if (!tile) return;
+    tile.scrollIntoView({ block: 'center' });
+    tile.querySelector<HTMLButtonElement>('.matrix-tile')?.focus({ preventScroll: true });
+  };
 
   const terms = searchTerms(query);
   const searching = terms.length > 0;
-  const visible = (item: CaseItem) => matchesSearch(item, notes[item.id], terms);
+  const smart = useSmartSearch(query, sync.config?.code ?? null);
+  const smartIds = new Set(smart.ids);
+  const visible = (item: CaseItem) => smartIds.has(item.id) || matchesSearch(item, notes[item.id], terms);
   const visibleSectors = sectors
     .map((sector) => ({
       ...sector,
@@ -144,11 +157,50 @@ export default function MatrixClient() {
         </div>
       </section>
 
+      <section className="board" aria-label="All cases at a glance">
+        <div className="section-line">
+          <span>AT A GLANCE</span>
+          <span>
+            {partnerMeta ? `BOTH ${bothCount} · ` : ''}{doneCount} DONE · {rawCases.length} TOTAL
+          </span>
+        </div>
+        <div className="board-grid">
+          {sectors.flatMap((sector) => sector.clusters.flatMap((cluster) => cluster.items)).map((item) => {
+            const state = stateOf(item);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`board-cell ${state}`}
+                onMouseEnter={() => setPeek(item)}
+                onFocus={() => setPeek(item)}
+                onMouseLeave={() => setPeek((current) => (current?.id === item.id ? null : current))}
+                onClick={() => {
+                  setPeek(item);
+                  jumpTo(item);
+                }}
+                aria-label={`${item.title}. ${completed.has(item.id) ? 'Completed' : 'Not completed'}`}
+              />
+            );
+          })}
+        </div>
+        <div className="board-peek" aria-live="polite">
+          {peek ? (
+            <>
+              <span className="board-peek-title">{peek.title}</span>
+              <span>{peek.source} · {peek.miller}{partnerMeta ? ` · ${PLAYERS.map((option) => `${option.label} ${(option.id === player ? completed : sync.partnerDone).has(peek.id) ? '✓' : '–'}`).join(' · ')}` : ''}</span>
+            </>
+          ) : (
+            <span>{partnerMeta ? 'LEFT HALF MICHAEL · RIGHT HALF SAM · FULL WHEN BOTH' : 'HOVER OR TAP A SQUARE · CONNECT TO SEE BOTH PLAYERS'}</span>
+          )}
+        </div>
+      </section>
+
       <nav className="matrix-nav" aria-label="Matrix sections">
         {sectors.map((sector) => <a key={sector.id} href={`#${sector.id}`}>{sector.label}</a>)}
       </nav>
 
-      <CaseSearch value={query} onChange={setQuery} matches={matchCount} />
+      <CaseSearch value={query} onChange={setQuery} matches={matchCount} thinking={smart.busy} />
 
       <section className="matrix-content">
         <div className="section-line">
@@ -182,15 +234,17 @@ export default function MatrixClient() {
                       <div className="matrix-grid">
                         {cluster.items.map((item) => {
                           const done = completed.has(item.id);
-                          const partnerDone = Boolean(partnerMeta && sync.partnerDone.has(item.id));
+                          const state = stateOf(item);
+                          const partnerDone = state !== 'none' && (state !== 'done' ? !done : true) && Boolean(partnerMeta);
                           return (
                             <div
-                              className={`matrix-tile-wrap ${item.title.length > 70 ? 'long' : ''} ${done ? 'done' : ''}`}
+                              className={`matrix-tile-wrap ${item.title.length > 70 ? 'long' : ''} ${state === 'done' ? 'done' : ''}`}
                               key={item.id}
+                              id={`case-${item.id}`}
                             >
                               <button
                                 type="button"
-                                className={`matrix-tile ${done ? 'done' : ''}`}
+                                className={`matrix-tile ${state}`}
                                 onClick={() => toggleCase(item.id)}
                                 disabled={!ready}
                                 aria-pressed={done}
@@ -199,7 +253,6 @@ export default function MatrixClient() {
                                 <span className="matrix-case-title">{item.title}</span>
                                 <span className="matrix-case-meta">{item.source} · {item.miller}</span>
                                 <span className="matrix-status" aria-hidden="true">{done ? '✓' : ''}</span>
-                                {partnerDone && partnerMeta && <span className="matrix-partner" aria-hidden="true">{partnerMeta.initial}</span>}
                               </button>
                               <TopicNoteButton
                                 item={item}
