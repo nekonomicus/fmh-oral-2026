@@ -84,9 +84,11 @@ export default function MatrixClient() {
   const [activeNote, setActiveNote] = useState<CaseItem | null>(null);
   const [syncOpen, setSyncOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const { tracker, ready, saveError, toggleCase, saveNote, hasSavedNote, fileState, sync } = useTracker();
+  const { tracker, ready, saveError, toggleCase, toggleRevised, saveNote, hasSavedNote, fileState, sync } = useTracker();
 
   const completed = new Set(tracker.completed);
+  const revised = new Set(tracker.revised);
+  const revisedCount = rawCases.filter((item) => revised.has(item.id)).length;
   const notes = tracker.notes;
   const doneCount = rawCases.filter((item) => completed.has(item.id)).length;
   const progress = Math.round((doneCount / rawCases.length) * 100);
@@ -161,7 +163,7 @@ export default function MatrixClient() {
         <div className="section-line">
           <span>AT A GLANCE</span>
           <span>
-            {partnerMeta ? `BOTH ${bothCount} · ` : ''}{doneCount} DONE · {rawCases.length} TOTAL
+            {partnerMeta ? `BOTH ${bothCount} · ` : ''}{doneCount} DONE · {revisedCount} REVISED · {rawCases.length} TOTAL
           </span>
         </div>
         <div className="board-grid">
@@ -234,6 +236,7 @@ export default function MatrixClient() {
                       <div className="matrix-grid">
                         {cluster.items.map((item) => {
                           const done = completed.has(item.id);
+                          const isRevised = revised.has(item.id);
                           const state = stateOf(item);
                           const partnerDone = state !== 'none' && (state !== 'done' ? !done : true) && Boolean(partnerMeta);
                           return (
@@ -262,6 +265,17 @@ export default function MatrixClient() {
                                 className="matrix-note-trigger"
                                 disabled={!ready}
                               />
+                              <button
+                                type="button"
+                                className={`matrix-revised-trigger ${isRevised ? 'on' : ''}`}
+                                onClick={() => toggleRevised(item.id)}
+                                disabled={!ready}
+                                aria-pressed={isRevised}
+                                aria-label={`${item.title}. ${isRevised ? 'Revised · click to clear' : 'Mark as revised'}`}
+                                title={isRevised ? 'REVISED · CLICK TO CLEAR' : 'MARK AS REVISED'}
+                              >
+                                <span className="matrix-revised-dot" aria-hidden="true" />
+                              </button>
                             </div>
                           );
                         })}

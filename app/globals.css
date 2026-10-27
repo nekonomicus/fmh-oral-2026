@@ -649,6 +649,7 @@ footer { display: flex; justify-content: space-between; padding-top: 52px; color
   letter-spacing: .06em;
   overflow-wrap: anywhere;
 }
+.matrix-tile .matrix-case-meta { padding-right: 26px; }
 .matrix-tile.done .matrix-case-meta { color: #3c4910; }
 .matrix-status {
   position: absolute;
@@ -668,6 +669,40 @@ footer { display: flex; justify-content: space-between; padding-top: 52px; color
 .matrix-tile-wrap.done .matrix-note-trigger { color: #455410; }
 .matrix-tile-wrap.done .matrix-note-trigger:hover,
 .matrix-tile-wrap.done .matrix-note-trigger.has-note { color: var(--ground); }
+
+/* revised mark: a small dot in the lower right corner of each tile, independent of the done state */
+.matrix-revised-trigger {
+  position: absolute;
+  z-index: 2;
+  right: 1px;
+  bottom: 1px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+.matrix-revised-trigger:disabled { cursor: wait; opacity: .45; }
+.matrix-revised-trigger:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.matrix-revised-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  border: 1.5px solid currentColor;
+}
+.matrix-revised-trigger:hover { color: var(--muted); }
+.matrix-revised-trigger.on { color: var(--signal); }
+.matrix-revised-trigger.on .matrix-revised-dot { background: currentColor; }
+.matrix-tile-wrap.done .matrix-revised-trigger { color: #455410; }
+.matrix-tile-wrap.done .matrix-revised-trigger:hover,
+.matrix-tile-wrap.done .matrix-revised-trigger.on { color: var(--ground); }
 
 @media (max-width: 760px) {
   .shell { width: min(100% - 28px, 1120px); padding-bottom: 44px; }

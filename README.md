@@ -34,6 +34,14 @@ The first time a device connects, anything already ticked on it is merged into
 the cloud copy. After that the newest save wins, and every device polls every
 30 seconds and whenever the tab regains focus.
 
+## Revised marks
+
+Every tile on the matrix has a small dot in its lower right corner. Click it to
+mark the case as revised (filled dot), click again to clear. The mark is
+separate from the done tick, is counted in the AT A GLANCE line, and is saved
+and synced exactly like the ticks (it lives in the same progress document and
+in backups as `revised`).
+
 ## Shared attachments
 
 When connected, the note drawer's **ADD FILE** uploads images (JPEG, PNG,

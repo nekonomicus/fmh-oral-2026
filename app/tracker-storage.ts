@@ -6,6 +6,8 @@ export type TrackerState = {
   daily: Record<string, string[]>;
   mocks: string[];
   notes: Record<string, string>;
+  /** Cases marked as revised (the small dot on the matrix tiles). Independent of `completed`. */
+  revised: string[];
 };
 
 export const EMPTY_TRACKER_STATE: TrackerState = {
@@ -13,6 +15,7 @@ export const EMPTY_TRACKER_STATE: TrackerState = {
   daily: {},
   mocks: [],
   notes: {},
+  revised: [],
 };
 
 export function normalizeTrackerState(value: unknown): TrackerState {
@@ -32,11 +35,12 @@ export function normalizeTrackerState(value: unknown): TrackerState {
     daily,
     mocks: Array.isArray(candidate.mocks) ? candidate.mocks.filter((item): item is string => typeof item === 'string') : [],
     notes,
+    revised: Array.isArray(candidate.revised) ? candidate.revised.filter((item): item is string => typeof item === 'string') : [],
   };
 }
 
 export function hasTrackerContent(state: TrackerState) {
-  return state.completed.length > 0 || state.mocks.length > 0 || Object.keys(state.notes).length > 0;
+  return state.completed.length > 0 || state.mocks.length > 0 || Object.keys(state.notes).length > 0 || state.revised.length > 0;
 }
 
 /** Union of two states. Used once when a device first joins a player that already has cloud data. */
@@ -57,6 +61,7 @@ export function mergeTrackerStates(base: TrackerState, extra: TrackerState): Tra
     daily,
     mocks: [...new Set([...base.mocks, ...extra.mocks])],
     notes,
+    revised: [...new Set([...base.revised, ...extra.revised])],
   };
 }
 

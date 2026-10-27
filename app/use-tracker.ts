@@ -284,6 +284,15 @@ export function useTracker({ prepare, onLoaded }: Options = {}) {
     });
   }, [mutate]);
 
+  const toggleRevised = useCallback((id: string) => {
+    mutate((current) => {
+      const next = new Set(current.revised);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { ...current, revised: [...next] };
+    });
+  }, [mutate]);
+
   const saveNote = useCallback((id: string, value: string) => {
     mutate((current) => {
       const notes = { ...current.notes };
@@ -368,6 +377,7 @@ export function useTracker({ prepare, onLoaded }: Options = {}) {
     replace,
     toggleCase,
     toggleMock,
+    toggleRevised,
     saveNote,
     hasSavedNote,
     fileState,
